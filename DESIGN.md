@@ -1,7 +1,7 @@
 # RTA App — Design
 
 Multi-mic SPL monitoring and zone prediction for a church worship space. Windows-only.
-Status: design agreed 2026-11-17. Phase 1 (Node) built 2026-11-17 — see README.md.
+Status: design agreed 2026-11-17. Phase 1 (Node) built 2026-11-17. Phase 2 (Hub) built 2026-11-17 on branch `phase-2`. See README.md.
 
 ## Goals
 
@@ -19,7 +19,7 @@ Status: design agreed 2026-11-17. Phase 1 (Node) built 2026-11-17 — see README
   - 48 kHz default; **96 kHz** allowed with a CPU/network resource warning.
   - Buffers ~7 days of level data locally; backfills the Hub after an outage.
 - **Hub**: exactly one per installation; aggregates nodes, runs prediction, alerts, logging, reports, integrations; serves the web dashboard.
-- **Node ↔ Hub transport**: lightweight, auto-discovered (mDNS/DNS-SD + WebSocket). Not NDI.
+- **Node ↔ Hub transport**: one WebSocket per node (`/ws/node`, JSON envelopes). Not NDI. Discovery is a UDP broadcast beacon on port 5181, with a fixed Hub address as fallback. See the Phase 2 decisions below for why not mDNS.
 - **Scale**: designed for 2–4 mics; more allowed with a network-congestion warning (especially with NDI audio enabled). Wired Ethernet recommended.
 
 ## Metering
@@ -132,9 +132,32 @@ Status: design agreed 2026-11-17. Phase 1 (Node) built 2026-11-17 — see README
 - The node's local UI is plain HTML/JS. The React dashboard is a Phase 2 Hub deliverable.
 - Deferred to the Phase 2 Hub: the "% of budget used" metric (it needs service definitions) and the gain-change heuristic beyond clip detection.
 
+## Decisions made during Phase 2
+
+- **Discovery is a UDP broadcast, not mDNS.** Windows' built-in mDNS responder holds port 5353, which makes app-level mDNS unreliable. The Hub broadcasts a small JSON beacon every 2 s on each IPv4 network (port 5181). Nodes on another subnet use a fixed Hub address.
+- **Node approval**: new nodes are *Pending* and their records are ignored until an admin accepts them. Auto-accept is an option, off by default. The node on the Hub's own PC (loopback + same node id) is accepted automatically.
+- **Store and forward**: nodes calibrate and build per-second and per-minute records locally, aligned to wall-clock seconds and minutes. Each record gets a sequence number in a local SQLite buffer (7-day retention). The Hub acknowledges the highest stored sequence, and unacknowledged records are resent after a reconnect. Stores are idempotent: `(mic, ts)` is the primary key. A new buffer id resets the Hub's acknowledgement.
+- **Hub storage**: SQLite with levels as integer centi-dB.
+  - Per-second rows hold LA, LC and LZ eq, LCpeak, LAS and LCS max, coverage and flags: about 1 GB per mic per year, kept 365 days by default.
+  - Per-minute rows add the 1/3-octave bands (int16 centi-dB) and are kept forever.
+- **Mic identity** is `nodeId:channel`. Display names and hiding are Hub-side.
+- **Records are calibrated at emission** with the profile current at that moment. Recalibrating does not rewrite history.
+- **Services**: a weekly schedule in Hub local time, plus manual start and stop. A manually stopped scheduled occurrence is not restarted. Manual services auto-end after 6 h. "Service Leq" is tracked live in memory from incoming per-second records and rebuilt from the database on restart.
+- **Alerts**:
+  - Rules are evaluated on the Hub every 500 ms on live values.
+  - Levels go normal → warn → alarm. Rising requires a hold time; falling requires dropping below the threshold minus the hysteresis.
+  - Events are stored. Phase 2 delivers alerts to the dashboard only; the outbound integrations are Phase 5.
+- **Auth**: one admin password per machine (PBKDF2-SHA256, 210k iterations) with a 12 h sliding cookie.
+  - Viewing (GET and WebSockets) is open. Every other `/api` call needs admin.
+  - With no password set, only loopback may change things, and the first password can only be set from the PC itself.
+  - Five wrong passwords lock sign-in for 1 minute.
+- **Pages**: the dashboard is React + TypeScript (Vite 6, uPlot) at `/`. The node page moved to `/node/`. The dashboard build output is not committed; the csproj builds it when it's missing.
+- **Default listen address**: Hub and Both use `0.0.0.0:5180` (LAN); node-only uses `localhost:5180`.
+
 ## Open items to verify during build
 
 - ProPresenter API auth requirements (none found in the 7.9 spec) and exact token payload for message triggers — check the in-app "API Documentation" button.
 - ProPresenter 22 release notes mention a fixed Windows bug where API messages didn't show on output — test message triggering on 21.x and 22.x.
 - User reported version "21.0.3"; release notes list 21, 21.0.1, 21.1 — confirm actual installed version.
 - ASIO capture is implemented but not yet tested against the real Focusrite/Behringer hardware (WASAPI and the test signal are).
+- Multi-PC discovery has only been tested with two processes on one PC (the beacon went out over the LAN interface). Test it with a second real PC, and check that Windows Firewall prompts for TCP 5180 and UDP 5181.

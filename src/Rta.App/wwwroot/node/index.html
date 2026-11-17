@@ -14,8 +14,10 @@
         <h1 id="nodeName">RTA Node</h1>
         <div id="deviceLine" class="muted">Connecting…</div>
       </div>
+      <span id="hubLink" class="hub-pill" title="Connection to the Hub">Hub: …</span>
     </div>
     <nav>
+      <a id="lnkDash" class="btnlink" href="/" hidden>Dashboard</a>
       <button id="btnStart">Start audio</button>
       <button id="btnStop">Stop audio</button>
       <button id="btnReset" title="Restart the session Leq">Reset session</button>
@@ -48,6 +50,18 @@
       <label>Sample rate <select id="sRate"></select></label>
       <label class="check"><input type="checkbox" id="sAuto"> Start audio automatically</label>
     </div>
+    <h3>Hub</h3>
+    <div class="form-grid">
+      <label>Send readings to a Hub
+        <select id="sHubMode">
+          <option value="Auto">Automatically (find it on the network)</option>
+          <option value="Manual">At a fixed address</option>
+          <option value="Off">Don't send</option>
+        </select>
+      </label>
+      <label id="sHubAddrWrap">Hub address <input id="sHubAddr" placeholder="e.g. 192.168.1.20:5180"></label>
+    </div>
+    <p id="sHubInfo" class="muted"></p>
     <p id="sDeviceNote" class="muted"></p>
     <p id="sRateWarn" class="warn" hidden>96 kHz roughly doubles CPU use (and network use once NDI audio is added). 48 kHz is plenty for SPL metering.</p>
     <h3>Warn / alarm levels <span class="muted">(colours the live readings)</span></h3>
@@ -142,6 +156,17 @@
       <label class="filebtn">Import profile… <input type="file" id="cImport" accept=".json"></label>
       <button id="cManual" type="button">Manual profile…</button>
     </div>
+  </dialog>
+
+  <!-- Admin sign-in -->
+  <dialog id="login">
+    <form method="dialog" class="dlg-head"><h2 id="loginTitle">Admin sign-in</h2><button value="cancel">Cancel</button></form>
+    <p id="loginHelp" class="muted">Changes need the admin password.</p>
+    <div class="form-grid">
+      <label>Password <input id="loginPw" type="password" autocomplete="current-password"></label>
+      <label id="loginPw2Wrap" hidden>Repeat password <input id="loginPw2" type="password" autocomplete="new-password"></label>
+    </div>
+    <div class="actions"><span id="loginMsg" class="muted"></span><button id="loginGo" class="primary">Sign in</button></div>
   </dialog>
 
   <script src="app.js"></script>
