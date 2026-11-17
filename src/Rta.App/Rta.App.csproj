@@ -6,6 +6,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>RtaApp</AssemblyName>
     <RootNamespace>Rta.App</RootNamespace>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
   <ItemGroup>
@@ -16,6 +17,8 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.15" />
     <PackageReference Include="QuestPDF" Version="2026.9.2" />
+    <PackageReference Include="SkiaSharp" Version="3.119.4" />
+    <PackageReference Include="SkiaSharp.NativeAssets.Win32" Version="3.119.4" />
   </ItemGroup>
 
   <!-- Builds the React dashboard (web/) into wwwroot when it hasn't been built yet. Run `npm run build` in web/ after changing it. -->

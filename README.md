@@ -2,7 +2,7 @@
 
 Multi-mic SPL monitoring (A/C-weighted) for a worship space. See [DESIGN.md](DESIGN.md) for the full design and build phases.
 
-## Status: Phase 5 (integrations and reports); Phase 4 (NDI) still to come
+## Status: Phases 1–5 done (NDI added in Phase 4); Phase 6 (installer) to come
 
 **Phase 1: Node**
 - Audio capture:
@@ -100,8 +100,18 @@ Multi-mic SPL monitoring (A/C-weighted) for a worship space. See [DESIGN.md](DES
   - Contents: Leq per mic and zone, maximum 1-min LCeq, peak, time above the warn and alarm levels, a level chart, alerts, and calibration notes.
 - **CSV export:** per second (or per minute for long ranges) for any mics and zones from History, or everything for a service. Spreadsheet formulas in names are neutralised.
 
+**Phase 4: NDI outputs** (needs NDI Tools or the NDI Runtime from ndi.video on each PC that publishes; the app finds it automatically)
+- **Per input, on each node** (node page → Settings → Inputs):
+  - **NDI audio**: the raw mic audio, unweighted, 1 channel at the node's sample rate.
+  - **NDI meter**: a 640×360 meter video (dBC/dBA, Leq 1 min/15 min/session, bar with warn/alarm marks, mini RTA). The levels are also sent as NDI metadata `<rta_levels … lcs="84.5" lceq1m="84.1" …/>`.
+- **From the Hub** (dashboard → Integrations → NDI video):
+  - **RTA Dashboard**: every mic (and optionally every zone) on one 720p/1080p/4K frame, with alert banner, service and clock.
+  - Optional **RTA Zone &lt;name&gt;** feed per zone.
+- **Names:** sources appear as `<PC name> (RTA Mic 1 meter)` and so on. Use them as inputs in vMix, OBS, ProPresenter (live video input) or a confidence monitor.
+- **Bandwidth:** each source shows an estimate, and the app warns above about 40 Mb/s and 100 Mb/s, or more than 8 sources from one PC.
+- **Checking feeds:** **Find sources / Check** on the Integrations page lists NDI sources on the network and confirms frames arrive (size, audio format, metadata).
+
 **Not yet:**
-- NDI outputs (Phase 4). This needs the NDI SDK/runtime, which you install yourself under NDI's license.
 - Windows service installer (Phase 6).
 
 ## Run
@@ -194,6 +204,8 @@ cd web && npm run typecheck
 - The node page's own graphs still keep history only in the browser. Stored history is on the Hub dashboard.
 - The ProPresenter Message readout sends the token in the v1 API's documented trigger format. Versions differ, so confirm it with your ProPresenter (the stage message path is the standard one).
 - MIDI has been built against the Windows MIDI API but not yet tried with a real device or loopMIDI.
+- NDI: the app doesn't ship the NDI runtime; each PC needs NDI Tools or the NDI Runtime installed. Before distributing the app, follow NDI's SDK license terms (attribution, runtime redistribution). NDI® is a registered trademark of Vizrt NDI AB.
+- NDI feeds have been verified on this PC through the NDI 6 runtime (found and received). They have not yet been viewed in vMix, OBS, ProPresenter or NDI Studio Monitor, or sent across to another PC.
 - PDF reports use QuestPDF under its Community license (free for organisations under US$1M annual revenue). Check its terms before distributing the app.
 - Zone predictions are made live on the Hub. Readings a node backfills after an outage are stored for the mics, but zone history for that gap is not reconstructed.
 - Mic identity on the Hub is node + input number. Moving a mic to another input or PC creates a new entry; the old history stays under the old one.

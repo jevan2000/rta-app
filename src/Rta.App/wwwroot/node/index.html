@@ -72,7 +72,13 @@
       <label>dBA alarm <input id="tAlarmA" type="number" step="0.5"></label>
     </div>
     <h3>Inputs</h3>
-    <table class="inputs"><thead><tr><th>On</th><th>Ch</th><th>Name</th><th>Mic plugged in</th><th>Calibration profile</th></tr></thead><tbody id="sInputs"></tbody></table>
+    <table class="inputs"><thead><tr><th>On</th><th>Ch</th><th>Name</th><th>Mic plugged in</th><th>Calibration profile</th><th title="Publish this input's raw audio as an NDI source">NDI audio</th><th title="Publish a level meter (video + level data) as an NDI source">NDI meter</th></tr></thead><tbody id="sInputs"></tbody></table>
+    <h3>NDI</h3>
+    <div class="form-grid">
+      <label>Meter video frame rate <input id="sNdiFps" type="number" min="1" max="30"></label>
+    </div>
+    <p id="sNdiStatus" class="muted"></p>
+    <p class="muted">Tick “NDI audio” / “NDI meter” per input above. Sources appear as “&lt;this PC&gt; (RTA &lt;input&gt; audio)” and “… meter”. NDI® is a registered trademark of Vizrt NDI AB.</p>
     <p class="muted">★ = profile made for this mic or channel. Any profile can be used on any input; mismatches only show a warning.</p>
     <div class="actions"><span id="sMsg" class="muted"></span><button id="sSave" class="primary">Save</button></div>
   </dialog>

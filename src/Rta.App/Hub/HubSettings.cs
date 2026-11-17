@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Rta.App.Hub.Integrations;
+using Rta.App.Ndi;
 using Rta.App.Node;
 using Rta.Core.Calibration;
 
@@ -36,6 +37,7 @@ public sealed record HubSettings
         new AlertRule { Id = 1, Name = "dBC 1-minute", Metric = AlertMetric.LCeq1m, Warn = 98, Alarm = 103 },
     ];
     public IntegrationSettings Integrations { get; init; } = new();
+    public HubNdiSettings Ndi { get; init; } = new();
 }
 
 public sealed class HubSettingsStore

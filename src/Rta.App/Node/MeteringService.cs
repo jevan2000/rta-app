@@ -83,6 +83,9 @@ public sealed class MeteringService(NodeConfigStore configStore, CalibrationStor
         }
     }
 
+    /// <summary>Every raw interleaved buffer (fired on the metering thread; handlers must be quick).</summary>
+    public event Action<float[], int, double>? RawAudio;
+
     /// <summary>Per-second and per-minute records for logging (fired on the metering thread).</summary>
     public event Action<LevelRecord>? RecordReady;
 
@@ -218,6 +221,8 @@ public sealed class MeteringService(NodeConfigStore configStore, CalibrationStor
                 var stride = _queueChannels;
                 foreach (var p in pipelines.Values)
                     p.Meter.ProcessInterleaved(buf, p.Config.ChannelIndex, stride);
+                try { RawAudio?.Invoke(buf, stride, _input?.SampleRate ?? Config.SampleRate); }
+                catch (Exception ex) { log.LogWarning(ex, "Raw audio consumer failed"); }
             }
         }
         catch (Exception ex)

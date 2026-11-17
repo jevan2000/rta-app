@@ -12,6 +12,10 @@ public sealed record InputConfig
     /// <summary>Which physical mic is plugged in (free text, e.g. "dbx RTA-M #1"). Used for calibration suggestions.</summary>
     public string? MicLabel { get; init; }
     public string? ProfileId { get; init; }
+    /// <summary>Publish this input's raw audio as an NDI source.</summary>
+    public bool NdiAudio { get; init; }
+    /// <summary>Publish a rendered meter (video + level metadata) for this input as an NDI source.</summary>
+    public bool NdiMeter { get; init; }
 }
 
 public sealed record Thresholds
@@ -39,6 +43,8 @@ public sealed record NodeConfig
     public bool AutoStart { get; init; } = true;
     public List<InputConfig> Inputs { get; init; } = [];
     public Thresholds Thresholds { get; init; } = new();
+    /// <summary>Frames per second for NDI meter video (1–30).</summary>
+    public int NdiMeterFps { get; init; } = 10;
 
     public static readonly int[] AllowedSampleRates = [44100, 48000, 88200, 96000];
 }
