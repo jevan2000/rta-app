@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>RtaApp</AssemblyName>
+    <RootNamespace>Rta.App</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Rta.Core\Rta.Core.csproj" />
+    <ProjectReference Include="..\Rta.Audio\Rta.Audio.csproj" />
+  </ItemGroup>
+
+</Project>

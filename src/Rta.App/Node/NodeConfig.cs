@@ -1,0 +1,75 @@
+using System.Text.Json;
+using Rta.Audio;
+using Rta.Core.Calibration;
+
+namespace Rta.App.Node;
+
+public sealed record InputConfig
+{
+    public int ChannelIndex { get; init; }
+    public bool Enabled { get; init; } = true;
+    public string Name { get; init; } = "";
+    /// <summary>Which physical mic is plugged in (free text, e.g. "dbx RTA-M #1"). Used for calibration suggestions.</summary>
+    public string? MicLabel { get; init; }
+    public string? ProfileId { get; init; }
+}
+
+public sealed record Thresholds
+{
+    public double WarnC { get; init; } = 98;
+    public double AlarmC { get; init; } = 103;
+    public double WarnA { get; init; } = 92;
+    public double AlarmA { get; init; } = 97;
+}
+
+public sealed record NodeConfig
+{
+    public string NodeName { get; init; } = Environment.MachineName;
+    public AudioBackend Backend { get; init; } = AudioBackend.TestSignal;
+    public string DeviceId { get; init; } = TestSignalInput.DeviceId;
+    public int SampleRate { get; init; } = 48000;
+    public bool AutoStart { get; init; } = true;
+    public List<InputConfig> Inputs { get; init; } = [];
+    public Thresholds Thresholds { get; init; } = new();
+
+    public static readonly int[] AllowedSampleRates = [44100, 48000, 88200, 96000];
+}
+
+public sealed class NodePaths
+{
+    public string DataDir { get; }
+    public string ConfigFile => Path.Combine(DataDir, "node.json");
+    public string CalibrationDir => Path.Combine(DataDir, "calibration");
+
+    public NodePaths(IConfiguration config)
+    {
+        DataDir = config["DataDir"] ?? Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "RtaApp");
+        Directory.CreateDirectory(DataDir);
+    }
+}
+
+public sealed class NodeConfigStore(NodePaths paths)
+{
+    private readonly object _lock = new();
+
+    public NodeConfig Load()
+    {
+        lock (_lock)
+        {
+            if (!File.Exists(paths.ConfigFile)) return new NodeConfig();
+            try { return JsonSerializer.Deserialize<NodeConfig>(File.ReadAllText(paths.ConfigFile), CalibrationStore.Json) ?? new NodeConfig(); }
+            catch (JsonException) { return new NodeConfig(); }
+        }
+    }
+
+    public void Save(NodeConfig config)
+    {
+        lock (_lock)
+        {
+            var tmp = paths.ConfigFile + ".tmp";
+            File.WriteAllText(tmp, JsonSerializer.Serialize(config, CalibrationStore.Json));
+            File.Move(tmp, paths.ConfigFile, overwrite: true);
+        }
+    }
+}

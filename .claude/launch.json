@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "node",
+      "runtimeExecutable": "C:/Program Files/dotnet/dotnet.exe",
+      "runtimeArgs": ["run", "--project", "src/Rta.App", "--no-launch-profile", "--", "--Urls", "http://localhost:5180", "--DataDir", ".devdata"],
+      "port": 5180
+    }
+  ]
+}

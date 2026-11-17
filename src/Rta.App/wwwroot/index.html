@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>RTA Node</title>
+  <link rel="stylesheet" href="app.css">
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <span id="statusDot" class="dot"></span>
+      <div>
+        <h1 id="nodeName">RTA Node</h1>
+        <div id="deviceLine" class="muted">Connecting…</div>
+      </div>
+    </div>
+    <nav>
+      <button id="btnStart">Start audio</button>
+      <button id="btnStop">Stop audio</button>
+      <button id="btnReset" title="Restart the session Leq">Reset session</button>
+      <button id="btnCal">Calibration</button>
+      <button id="btnSettings">Settings</button>
+    </nav>
+  </header>
+
+  <div id="warnings"></div>
+  <main id="channels"></main>
+  <p id="empty" class="muted center" hidden>No inputs are being metered. Open <b>Settings</b> to choose an audio device and enable inputs.</p>
+
+  <!-- Detail view -->
+  <dialog id="detail" class="wide">
+    <form method="dialog" class="dlg-head"><h2 id="detailTitle"></h2><button>Close</button></form>
+    <div class="detail-grid">
+      <section><h3>Level vs time <span class="muted">(C / A Slow, last 15 min)</span></h3><canvas id="dTime" height="220"></canvas></section>
+      <section><h3>Leq</h3><div id="dTiles" class="tiles"></div></section>
+      <section><h3>1/3-octave RTA <span class="muted">(peak hold)</span></h3><canvas id="dRta" height="220"></canvas></section>
+      <section><h3>C − A trend <span class="muted">(1-min Leq difference)</span></h3><canvas id="dCa" height="220"></canvas></section>
+    </div>
+  </dialog>
+
+  <!-- Settings -->
+  <dialog id="settings" class="wide">
+    <form method="dialog" class="dlg-head"><h2>Settings</h2><button>Close</button></form>
+    <div class="form-grid">
+      <label>Node name <input id="sName"></label>
+      <label>Audio device <select id="sDevice"></select></label>
+      <label>Sample rate <select id="sRate"></select></label>
+      <label class="check"><input type="checkbox" id="sAuto"> Start audio automatically</label>
+    </div>
+    <p id="sDeviceNote" class="muted"></p>
+    <p id="sRateWarn" class="warn" hidden>96 kHz roughly doubles CPU use (and network use once NDI audio is added). 48 kHz is plenty for SPL metering.</p>
+    <h3>Warn / alarm levels <span class="muted">(colours the live readings)</span></h3>
+    <div class="form-grid four">
+      <label>dBC warn <input id="tWarnC" type="number" step="0.5"></label>
+      <label>dBC alarm <input id="tAlarmC" type="number" step="0.5"></label>
+      <label>dBA warn <input id="tWarnA" type="number" step="0.5"></label>
+      <label>dBA alarm <input id="tAlarmA" type="number" step="0.5"></label>
+    </div>
+    <h3>Inputs</h3>
+    <table class="inputs"><thead><tr><th>On</th><th>Ch</th><th>Name</th><th>Mic plugged in</th><th>Calibration profile</th></tr></thead><tbody id="sInputs"></tbody></table>
+    <p class="muted">★ = profile made for this mic or channel. Any profile can be used on any input; mismatches only show a warning.</p>
+    <div class="actions"><span id="sMsg" class="muted"></span><button id="sSave" class="primary">Save</button></div>
+  </dialog>
+
+  <!-- Calibration -->
+  <dialog id="calibration" class="wide">
+    <form method="dialog" class="dlg-head"><h2>Calibration</h2><button>Close</button></form>
+
+    <h3>New calibration</h3>
+    <div class="form-grid four">
+      <label>Input to calibrate <select id="cInput"></select></label>
+      <label>Method
+        <select id="cMethod">
+          <option value="Calibrator">Acoustic calibrator — most accurate</option>
+          <option value="MeterMatch">Match an SPL meter</option>
+          <option value="Transfer">Copy from another calibrated mic</option>
+          <option value="PhoneApp">Phone meter app — unreliable</option>
+          <option value="SpecEstimate">Estimate from specs — very rough</option>
+        </select>
+      </label>
+
+      <label data-for="Calibrator">Calibrator level (dB) <input id="cCalLevel" type="number" step="0.1" value="94" list="calLevels"></label>
+      <label data-for="Calibrator">Tone
+        <select id="cTone"><option value="1000">1 kHz</option><option value="250">250 Hz (pistonphone)</option></select>
+      </label>
+      <label data-for="Calibrator">Calibrator class
+        <select id="cCalClass"><option value="Class2">Class 2</option><option value="Class1">Class 1</option><option value="Unknown">Unknown</option></select>
+      </label>
+
+      <label data-for="MeterMatch PhoneApp">Reading on the meter / app (dB) <input id="cRef" type="number" step="0.1" value="85"></label>
+      <label data-for="MeterMatch PhoneApp Transfer">Weighting
+        <select id="cWeight"><option>C</option><option>A</option><option>Z</option></select>
+      </label>
+      <label data-for="MeterMatch">Meter class
+        <select id="cMeterClass"><option value="Class2">Class 2</option><option value="Class1">Class 1</option><option value="Consumer">Consumer / unknown</option></select>
+      </label>
+      <label data-for="MeterMatch">Meter model (optional) <input id="cMeterModel" placeholder="e.g. Extech 407730"></label>
+      <label data-for="PhoneApp">Phone
+        <select id="cPhone"><option value="IPhone">iPhone</option><option value="Android">Android</option></select>
+      </label>
+      <label data-for="PhoneApp">App (optional) <input id="cPhoneApp" placeholder="e.g. NIOSH SLM"></label>
+
+      <label data-for="Transfer">Reference mic (already calibrated) <select id="cRefInput"></select></label>
+
+      <label data-for="SpecEstimate">Mic sensitivity (mV/Pa) <input id="cSens" type="number" step="0.1" placeholder="from mic datasheet"></label>
+      <label data-for="SpecEstimate">Interface max input at minimum gain (dBu) <input id="cMaxIn" type="number" step="0.1" placeholder="from interface datasheet"></label>
+      <label data-for="SpecEstimate">Gain above minimum (dB) <input id="cGain" type="number" step="0.5" placeholder="from interface software"></label>
+
+      <label data-for="Calibrator MeterMatch PhoneApp Transfer">Capture (s) <input id="cSecs" type="number" min="3" max="60" value="5"></label>
+    </div>
+    <datalist id="calLevels"><option value="94"><option value="104"><option value="114"></datalist>
+    <p id="cHelp" class="muted"></p>
+    <div class="actions"><span id="cMsg" class="muted"></span><button id="cMeasure" class="primary">Measure</button></div>
+
+    <div id="cResult" hidden>
+      <div class="result">
+        <div><span class="muted">Measured</span><b id="rMeasured"></b></div>
+        <div><span class="muted">Offset</span><b id="rOffset"></b></div>
+        <div><span class="muted">Accuracy</span><b id="rQuality"></b></div>
+        <div><span class="muted" id="rStabLabel">Stability</span><b id="rStab"></b></div>
+        <div><span class="muted">Strongest band</span><b id="rBand"></b></div>
+      </div>
+      <ul id="rWarn" class="warn-list"></ul>
+      <ul id="rNotes" class="note-list"></ul>
+      <div class="form-grid four">
+        <label>Profile name <input id="pName"></label>
+        <label>Mic name <input id="pMic" placeholder="e.g. dbx RTA-M #1"></label>
+        <label>Mic serial <input id="pSerial"></label>
+        <label>Gain setting <input id="pGain" placeholder="e.g. knob at 2 o'clock"></label>
+        <label class="check"><input type="checkbox" id="pBindCh" checked> Note the channel</label>
+        <label class="check"><input type="checkbox" id="pAssign" checked> Assign to this input now</label>
+        <label>Mic response file (optional) <input type="file" id="pCurve" accept=".txt,.frd,.cal,.csv"></label>
+        <label>Notes <input id="pNotes"></label>
+      </div>
+      <div class="actions"><span id="pMsg" class="muted"></span><button id="pSave" class="primary">Save profile</button></div>
+    </div>
+
+    <h3>Profiles</h3>
+    <table class="profiles"><thead><tr><th>Name</th><th>Offset</th><th>Accuracy</th><th>Method</th><th>Mic</th><th>Channel</th><th>Curve</th><th>Created</th><th></th></tr></thead><tbody id="cProfiles"></tbody></table>
+    <div class="actions">
+      <label class="filebtn">Import profile… <input type="file" id="cImport" accept=".json"></label>
+      <button id="cManual" type="button">Manual profile…</button>
+    </div>
+  </dialog>
+
+  <script src="app.js"></script>
+</body>
+</html>
