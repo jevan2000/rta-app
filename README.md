@@ -2,7 +2,7 @@
 
 Multi-mic SPL monitoring (A/C-weighted) for a worship space. See [DESIGN.md](DESIGN.md) for the full design and build phases.
 
-## Status: Phases 1–5 done (NDI added in Phase 4); Phase 6 (installer) to come
+## Status: all six phases built (v1.0.0)
 
 **Phase 1: Node**
 - Audio capture:
@@ -111,12 +111,51 @@ Multi-mic SPL monitoring (A/C-weighted) for a worship space. See [DESIGN.md](DES
 - **Bandwidth:** each source shows an estimate, and the app warns above about 40 Mb/s and 100 Mb/s, or more than 8 sources from one PC.
 - **Checking feeds:** **Find sources / Check** on the Integrations page lists NDI sources on the network and confirms frames arrive (size, audio format, metadata).
 
-**Not yet:**
-- Windows service installer (Phase 6).
+**Phase 6: installer and running unattended**
+- **`RtaSetup-1.0.0.exe`:** one self-contained installer (no .NET needed on the target PC). It asks:
+  - **What this PC does:** mics and Hub, mics only, or Hub only.
+  - **How it starts:** at sign-in with a status icon, or as a Windows service at boot.
+  - Whether to add a **Windows Firewall rule** (private and domain networks only), and whether to show the status icon at sign-in.
+- **As a service:**
+  - Runs as the low-privilege *LocalService* account with delayed auto-start, and restarts automatically if it crashes.
+  - Suits Hub-only PCs. Many ASIO drivers need a signed-in user, so PCs with audio interfaces should start at sign-in. Set Windows to sign in automatically on an unattended booth PC.
+- **Status icon** (RtaTray, in the notification area):
+  - The colour shows status: green OK, amber warning, red alarm or error.
+  - It pops up a notification when an alarm starts.
+  - The menu opens the dashboard, node page and logs.
+  - In sign-in mode it also starts the app hidden and restarts it if it stops.
+- **Logs:** daily files in `C:\ProgramData\RtaApp\logs` (14 days kept).
+- **Upgrades:** run the new setup over the old one. It stops the app cleanly, keeps settings and data, and remembers the role and start mode.
+- **Uninstall:** removes the program, service, firewall rule and shortcuts, and keeps `C:\ProgramData\RtaApp` (settings, calibration, logged data) unless you delete it.
 
-## Run
 
-Requires the .NET 10 SDK, and Node.js 20+ to build the dashboard.
+## Install (church PCs)
+
+Run `RtaSetup-1.0.0.exe` on each PC and answer the two questions:
+
+| PC | What it does | How it starts |
+|---|---|---|
+| Single PC with the audio interface | Mics and Hub | At sign-in |
+| Booth PC with an interface, Hub elsewhere | Mics only | At sign-in (with Windows auto sign-in if unattended) |
+| Office/server PC, no mics | Hub only | Windows service |
+
+Then open http://localhost:5180 on the Hub (or `http://<hub IP>:5180` from any device on the network). The first time you change a setting, you're asked to choose an admin password.
+
+Scripted install: `RtaSetup-1.0.0.exe /VERYSILENT /ROLE=Both|Node|Hub /RUNAS=signin|service /TASKS="firewall,startup"`.
+
+Settings chosen in setup are stored in `C:\ProgramData\RtaApp\app.json` (`Mode`, `RunAs`, `Urls`). Command-line options still override them.
+
+## Build
+
+Requires the .NET 10 SDK, Node.js 20+ (dashboard), and Inno Setup 6 (`winget install JRSoftware.InnoSetup`) for the installer.
+
+```bash
+powershell -ExecutionPolicy Bypass -File installer/build-installer.ps1
+```
+
+This builds the dashboard, publishes RtaApp and RtaTray self-contained for win-x64 into `artifacts/app`, and writes `artifacts/RtaSetup-<version>.exe`. The version comes from `Directory.Build.props`.
+
+## Run from source (development)
 
 ```bash
 cd web && npm ci && npm run build && cd ..
@@ -128,15 +167,15 @@ dotnet run --project src/Rta.App --no-launch-profile
 
 Then open http://localhost:5180 for the dashboard, or http://localhost:5180/node/ for this PC's node. The node starts on the test signal; pick your interface in the node's **Settings**. The first time you change something, the app asks you to set an admin password.
 
-Options (command line or `appsettings.json`):
+Options (command line, `appsettings.json`, or `app.json` in the data folder):
 
 - `--Mode Both|Node|Hub` (default `Both`).
 - `--Urls`: the listen address. The default is `http://0.0.0.0:5180` for a Hub (reachable on the LAN) and `http://localhost:5180` for a node-only PC.
-- `--DataDir <folder>`: where config, calibration, buffers and the Hub database live (default `C:\ProgramData\RtaApp`).
+- `--DataDir <folder>`: where config, calibration, buffers, logs and the Hub database live (default `C:\ProgramData\RtaApp`). The `.claude/launch.json` dev configs use `.devdata`.
 
 ### Adding another PC as a node
 
-1. On the second PC, run with `--Mode Node`.
+1. On the second PC, install with "Mics only" (or run from source with `--Mode Node`).
 2. Open http://localhost:5180/node/ there, pick the interface, and calibrate.
 3. It finds the Hub automatically. On the Hub, open **Nodes** and press **Accept**. Everything it has logged in the meantime is sent.
 4. If it can't find the Hub (different subnet or VLAN), set **Settings → Hub → At a fixed address** on the node.
@@ -204,6 +243,8 @@ cd web && npm run typecheck
 - The node page's own graphs still keep history only in the browser. Stored history is on the Hub dashboard.
 - The ProPresenter Message readout sends the token in the v1 API's documented trigger format. Versions differ, so confirm it with your ProPresenter (the stage message path is the standard one).
 - MIDI has been built against the Windows MIDI API but not yet tried with a real device or loopMIDI.
+- Services run in Windows' isolated service session. ASIO capture from a service is untested and often fails, so use sign-in mode on PCs with interfaces. The installer was tested on this PC: Hub as a service, upgrade to Both at sign-in, the tray watchdog restarting a killed app, and a clean uninstall.
+- In sign-in mode, any user who can sign in to the PC can change the files in `C:\ProgramData\RtaApp`. Keep booth PCs to trusted accounts.
 - NDI: the app doesn't ship the NDI runtime; each PC needs NDI Tools or the NDI Runtime installed. Before distributing the app, follow NDI's SDK license terms (attribution, runtime redistribution). NDI® is a registered trademark of Vizrt NDI AB.
 - NDI feeds have been verified on this PC through the NDI 6 runtime (found and received). They have not yet been viewed in vMix, OBS, ProPresenter or NDI Studio Monitor, or sent across to another PC.
 - PDF reports use QuestPDF under its Community license (free for organisations under US$1M annual revenue). Check its terms before distributing the app.

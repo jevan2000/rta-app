@@ -488,3 +488,6 @@ $RECYCLE.BIN/
 src/Rta.App/wwwroot/index.html
 src/Rta.App/wwwroot/assets/
 web/node_modules/
+
+# installer build output
+artifacts/

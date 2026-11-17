@@ -10,7 +10,23 @@ using Rta.App.Node;
 using Rta.App.Security;
 using Rta.Core.Calibration;
 
-var builder = WebApplication.CreateBuilder(args);
+using Microsoft.Extensions.Hosting.WindowsServices;
+
+// Installed copies (service or started at sign-in) run from Program Files with an unrelated working
+// directory, so serve files from the app folder; `dotnet run` keeps the project as content root.
+var installedLayout = File.Exists(Path.Combine(AppContext.BaseDirectory, "wwwroot", "node", "index.html")) && !Directory.Exists("wwwroot");
+var builder = WebApplication.CreateBuilder(new WebApplicationOptions
+{
+    Args = args,
+    ContentRootPath = installedLayout || WindowsServiceHelpers.IsWindowsService() ? AppContext.BaseDirectory : null,
+});
+
+// Settings chosen in the installer (Mode, Urls, RunAs) live in <data folder>pp.json; the command line still wins.
+var installedConfig = Path.Combine(new NodePaths(builder.Configuration).DataDir, "app.json");
+builder.Configuration.AddJsonFile(installedConfig, optional: true, reloadOnChange: false);
+builder.Configuration.AddCommandLine(args);
+builder.Host.UseWindowsService(o => o.ServiceName = "RtaApp");
+builder.Logging.AddProvider(new FileLoggerProvider(Path.Combine(new NodePaths(builder.Configuration).DataDir, "logs")));
 
 // Mode: Node (capture only), Hub (dashboard/logging only) or Both (default: one PC does everything).
 var role = AppMode.Parse(builder.Configuration["Mode"]);
@@ -30,7 +46,9 @@ builder.Services.AddSingleton<NodePaths>();
 builder.Services.AddSingleton<AdminAuth>();
 
 var dataDir = new NodePaths(builder.Configuration).DataDir;
-builder.Services.AddDataProtection().PersistKeysToFileSystem(new DirectoryInfo(Path.Combine(dataDir, "keys"))).SetApplicationName("RtaApp");
+// Cookie-signing keys, encrypted with DPAPI (machine scope, so the service and signed-in users can both read them).
+builder.Services.AddDataProtection().PersistKeysToFileSystem(new DirectoryInfo(Path.Combine(dataDir, "keys")))
+    .ProtectKeysWithDpapi(protectToLocalMachine: true).SetApplicationName("RtaApp");
 builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme).AddCookie(o =>
 {
     o.Cookie.Name = "rta_admin";
@@ -104,7 +122,12 @@ app.UseRouting();
 app.UseAuthentication();
 app.UseAdminGuard();
 
-app.MapGet("/api/app", () => new { role = mode.Role, runsNode = mode.RunsNode, runsHub = mode.RunsHub, version = AppMode.Version });
+app.MapGet("/api/app", () => new
+{
+    role = mode.Role, runsNode = mode.RunsNode, runsHub = mode.RunsHub, version = AppMode.Version,
+    runAs = WindowsServiceHelpers.IsWindowsService() ? "service" : builder.Configuration["RunAs"] ?? "process",
+    dataDir,
+});
 app.MapAuthEndpoints();
 app.MapNdiEndpoints(mode);
 if (mode.RunsNode) app.MapNodeEndpoints();
