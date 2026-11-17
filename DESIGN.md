@@ -1,7 +1,7 @@
 # RTA App — Design
 
 Multi-mic SPL monitoring and zone prediction for a church worship space. Windows-only.
-Status: design agreed 2026-11-17. Phase 1 (Node) built 2026-11-17. Phase 2 (Hub) built 2026-11-17 on branch `phase-2`. See README.md.
+Status: design agreed 2026-11-17. Phase 1 (Node) built 2026-11-17. Phase 2 (Hub) merged 2026-11-17. Phase 3 (survey and prediction) in PR #2. Phase 5 (integrations and reports) built 2026-11-17 on branch `phase-5`, ahead of Phase 4 at the user's request. See README.md.
 
 ## Goals
 
@@ -154,10 +154,56 @@ Status: design agreed 2026-11-17. Phase 1 (Node) built 2026-11-17. Phase 2 (Hub)
 - **Pages**: the dashboard is React + TypeScript (Vite 6, uPlot) at `/`. The node page moved to `/node/`. The dashboard build output is not committed; the csproj builds it when it's missing.
 - **Default listen address**: Hub and Both use `0.0.0.0:5180` (LAN); node-only uses `localhost:5180`.
 
+## Decisions made during Phase 3
+
+- **Gap-free band data:** each live message (5×/s) carries `Interval` levels: calibrated LA, LC, LZ and band Leq over exactly the audio since the previous message. The Hub keeps 15 minutes of these per mic, timestamped on arrival at the Hub. That gives time alignment across nodes to about 0.2 s, which is plenty over a 60 s+ survey.
+- **Survey:**
+  - Accumulates the rover and every permanent (plan) mic over the same window, plus 5-s chunks of the rover−ref dBC offset.
+  - Confidence = duration factor × steadiness (standard error of the chunk offsets) × band coverage (share of the 50 Hz–10 kHz bands with signal).
+  - Manual meter entries use the refs' stored per-second Leq over the stated window and have fixed low confidence (0.2–0.3).
+- **Model per zone:**
+  - Band offsets O[r,b] = zone − ref_r per 1/3-octave band. Bands more than 50 dB below the loudest band during the survey fall back to the broadband offset.
+  - Ref weight = 1/(stderr² + 0.25). The 0.25 floor stands for about 0.5 dB of model error no survey removes.
+  - Prediction: weighted mean across refs per band, then the A/C band sum plus K (rover broadband − band sum, measured in the survey).
+  - Manual-only zones use broadband offsets.
+  - Replace mode uses the newest included survey; Average weights included surveys by confidence.
+- **Calibration compensation:** each survey stores every ref's calibration offset and profile id. Live predictions subtract (current offset − offset at survey), so recalibrating a permanent mic doesn't skew zones. A profile change is reported as information, not as stale.
+- **Stale** = a ref moved more than 0.5 m on the plan, or removed from the plan. Displayed confidence = model confidence × 0.5 if stale × (refs online / refs in model).
+- **Zones are virtual mics** `zones:<zoneId>`, logged per second (1-s predicted Leq) and per minute (with bands) by the Hub. History, services and alerts work unchanged. Alert targets: `*` (all mics), `zones:*` (all zones), or a single key.
+- **Plan** is stored as `plan.json` in metres. Zone ids are Hub-wide integers and never reused. Underlay images (PNG/JPEG/WebP, ≤ 15 MB, checked by magic bytes; SVG is refused) live in `plan-images/`.
+- **Caching:** HTML is served `no-cache`; hashed `/assets` are cached for a year, so dashboard updates load straight away.
+
+## Decisions made during Phase 5
+
+- **Order:** Phase 5 was built before Phase 4 (NDI). Reports and the ProPresenter alarm are more useful week to week, and Phase 4 needs the NDI SDK, which the user installs under NDI's license.
+- **One integration loop** (`IntegrationService`) runs every 200 ms on the Hub snapshot:
+  - It detects alert start, escalate, de-escalate and clear, and service start and end, by comparing ticks.
+  - Each output keeps its own rate and a status for the UI.
+  - Alert clears report the last known alert details.
+- **Stable names for other systems:** mic and zone labels are turned into slugs (lowercase, accents stripped, `_`). Duplicate names get the node name added. Measures: lcs, las, lceq1m, laeq1m, lceq15m, laeq15m, lceqservice, laeqservice, lcpeak1m, cminusa.
+- **ProPresenter:**
+  - The stage message (`PUT/DELETE /v1/stage/message`) carries alarms, which override the optional readout line.
+  - The Message readout (`POST /v1/message/{id}/trigger` with `[{name, text:{text}}]`) is opt-in because it can reach the audience output.
+  - Updates go out at most once a second and only when the text changes.
+  - All request bodies are sent with a Content-Length: some embedded HTTP servers can't read chunked uploads, which .NET's `*AsJsonAsync` uses.
+- **MIDI:** NAudio.Midi 2.2.1 (it matches the other NAudio 2.2.1 packages; 3.x would force an NAudio.Core upgrade). CCs are sent on change and refreshed every 5 s; warn and alarm notes are held while active.
+- **Webhooks** are queued (bounded, oldest dropped) and retried twice with backoff.
+- **Integration tests** need admin, since they send real messages. The `/api/v1` levels API is read-only and open, like the dashboard.
+- **Reports:**
+  - QuestPDF (Community license), Letter size.
+  - The chart is an SVG built from 10-s energy averages; uncalibrated mics are left out of it.
+  - Missing-glyph errors are off, so unusual characters in names can't break a report.
+  - Reports open inline in the browser (`?download=1` to save).
+  - The automatic pass runs every 30 s and writes `<date> <time> <name> (<id>).pdf` once per ended service.
+- **CSV** is long format (one row per source per interval), uses the per-minute table for ranges over 3 h unless asked otherwise, and prefixes `'` to fields starting with `= + - @`.
+
 ## Open items to verify during build
 
 - ProPresenter API auth requirements (none found in the 7.9 spec) and exact token payload for message triggers — check the in-app "API Documentation" button.
 - ProPresenter 22 release notes mention a fixed Windows bug where API messages didn't show on output — test message triggering on 21.x and 22.x.
 - User reported version "21.0.3"; release notes list 21, 21.0.1, 21.1 — confirm actual installed version.
 - ASIO capture is implemented but not yet tested against the real Focusrite/Behringer hardware (WASAPI and the test signal are).
+- ProPresenter integration has been tested only against a stand-in HTTP server. Test it on the real ProPresenter 21/22 machine: the stage message, the Message token format, and whether the API needs a password.
+- MIDI output is untested on a real device.
+- Zone prediction has been tested with test signals only. Validate it in the room: survey a zone, then compare the prediction against the roving mic left in place during a later service.
 - Multi-PC discovery has only been tested with two processes on one PC (the beacon went out over the LAN interface). Test it with a second real PC, and check that Windows Firewall prompts for TCP 5180 and UDP 5181.

@@ -15,6 +15,7 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.15" />
+    <PackageReference Include="QuestPDF" Version="2026.9.2" />
   </ItemGroup>
 
   <!-- Builds the React dashboard (web/) into wwwroot when it hasn't been built yet. Run `npm run build` in web/ after changing it. -->

@@ -42,7 +42,10 @@ public sealed record MicInfo(
     string? ProfileName,
     CalibrationQuality? Quality,
     double? UncertaintyDb,
-    bool Calibrated);
+    bool Calibrated,
+    /// <summary>Calibration offset in use (0 when uncalibrated); lets the Hub compensate zone models after recalibration.</summary>
+    double OffsetDb = 0,
+    string? ProfileId = null);
 
 public sealed record Hello(
     string NodeId,
@@ -72,7 +75,12 @@ public sealed record LiveMic(
     bool Calibrated,
     bool Clipped,
     double[] Bands,
-    IReadOnlyList<string> Warnings);
+    IReadOnlyList<string> Warnings,
+    /// <summary>Leq over exactly the audio since the previous live message (gap-free), for surveys and zone prediction.</summary>
+    IntervalLevels? Interval = null);
+
+/// <summary>Calibrated Leq (dB) over one live-message interval.</summary>
+public sealed record IntervalLevels(double Seconds, double LA, double LC, double LZ, double[] Bands);
 
 public sealed record LiveUpdate(long T, bool Running, string? Error, IReadOnlyList<LiveMic> Mics, IReadOnlyList<string> NodeWarnings);
 

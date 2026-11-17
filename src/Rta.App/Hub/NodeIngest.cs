@@ -5,7 +5,7 @@ using Rta.Core.Protocol;
 namespace Rta.App.Hub;
 
 /// <summary>Handles one node's WebSocket on the Hub: hello → welcome, live updates, record batches → ack.</summary>
-public sealed class NodeIngest(HubStore store, HubState state, HubSettingsStore settings, AppMode mode, IServiceProvider services, ILogger<NodeIngest> log)
+public sealed class NodeIngest(HubStore store, HubState state, HubSettingsStore settings, AppMode mode, ZoneEngine zones, IServiceProvider services, ILogger<NodeIngest> log)
 {
     public async Task HandleAsync(HttpContext ctx)
     {
@@ -75,6 +75,7 @@ public sealed class NodeIngest(HubStore store, HubState state, HubSettingsStore 
                     case "live":
                         if (conn is null) break;
                         conn.Live = Proto.Read<LiveUpdate>(payload);
+                        if (store.GetNode(conn.NodeId)?.Acceptance == NodeAcceptance.Accepted) zones.OnLive(conn.NodeId, conn.Live);
                         break;
                     case "records":
                     {

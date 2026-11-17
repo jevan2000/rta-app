@@ -8,6 +8,10 @@ import { ServicesPage } from './pages/ServicesPage';
 import { AlertsPage } from './pages/AlertsPage';
 import { NodesPage } from './pages/NodesPage';
 import { SettingsPage } from './pages/SettingsPage';
+import { RoomPage } from './pages/RoomPage';
+import { PlanPage } from './pages/PlanPage';
+import { SurveyPage } from './pages/SurveyPage';
+import { IntegrationsPage } from './pages/IntegrationsPage';
 
 interface Ctx {
   live: HubLive | null;
@@ -21,7 +25,7 @@ const AppCtx = createContext<Ctx>(null!);
 export const useApp = () => useContext(AppCtx);
 
 const ROUTES: [string, string][] = [
-  ['live', 'Live'], ['history', 'History'], ['services', 'Services'], ['alerts', 'Alerts'], ['nodes', 'Nodes'], ['settings', 'Settings'],
+  ['live', 'Live'], ['room', 'Room'], ['history', 'History'], ['services', 'Services'], ['alerts', 'Alerts'], ['nodes', 'Nodes'], ['plan', 'Plan'], ['survey', 'Survey'], ['integrations', 'Integrations'], ['settings', 'Settings'],
 ];
 
 function useHashRoute() {
@@ -84,8 +88,9 @@ export function App() {
         </div>
         <nav>
           {ROUTES.map(([r, label]) => (
-            <a key={r} href={`#/${r}`} className={page === r || (page === 'mic' && r === 'live') ? 'active' : ''}>
+            <a key={r} href={`#/${r}`} className={page === r || (page === 'mic' && r === 'live') || (page === 'zone' && r === 'room') ? 'active' : ''}>
               {label}{r === 'nodes' && pending > 0 ? <span className="count">{pending}</span> : null}
+              {r === 'survey' && live?.survey ? <span className="count">●</span> : null}
               {r === 'alerts' && (live?.alerts.length ?? 0) > 0 ? <span className="count alarm">{live!.alerts.length}</span> : null}
             </a>
           ))}
@@ -99,6 +104,11 @@ export function App() {
       <main className="page">
         {page === 'live' && <LivePage />}
         {page === 'mic' && <MicPage micKey={arg} />}
+        {page === 'zone' && <MicPage micKey={`zones:${arg}`} />}
+        {page === 'room' && <RoomPage />}
+        {page === 'plan' && <PlanPage />}
+        {page === 'survey' && <SurveyPage />}
+        {page === 'integrations' && <IntegrationsPage />}
         {page === 'history' && <HistoryPage />}
         {page === 'services' && <ServicesPage id={arg || undefined} />}
         {page === 'alerts' && <AlertsPage />}
@@ -123,7 +133,7 @@ function AuthButton() {
 function AlertBanner() {
   const { live } = useApp();
   if (!live || !live.alerts.length) return null;
-  const label = (key: string) => live.mics.find((m) => m.key === key)?.label ?? key;
+  const label = (key: string) => live.mics.find((m) => m.key === key)?.label ?? live.zones.find((z) => z.key === key)?.name ?? key;
   const worst = live.alerts.some((a) => a.level === 'alarm') ? 'alarm' : 'warn';
   return (
     <div className={`banner ${worst}`}>

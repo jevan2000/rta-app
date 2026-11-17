@@ -34,7 +34,7 @@ public sealed record ActiveAlertView(long RuleId, string RuleName, string MicKey
 public sealed record HubLive(
     long T, string HubId, string HubName, ServiceLive? Service,
     IReadOnlyList<NodeLiveView> Nodes, IReadOnlyList<MicLiveView> Mics, IReadOnlyList<ActiveAlertView> Alerts,
-    IReadOnlyList<double> BandsHz);
+    IReadOnlyList<double> BandsHz, IReadOnlyList<ZoneLiveView> Zones, SurveyStatus? Survey);
 
 /// <summary>In-memory live view of the Hub: connected nodes, latest readings and the running service's Leq.</summary>
 public sealed class HubState(HubStore store, HubSettingsStore settings)
@@ -48,6 +48,10 @@ public sealed class HubState(HubStore store, HubSettingsStore settings)
     private DateTimeOffset _micsLoaded = DateTimeOffset.MinValue;
 
     public event Action? Changed;
+
+    /// <summary>Set by the zone engine (avoids a circular dependency).</summary>
+    public Func<IReadOnlyList<ZoneLiveView>>? ZoneProvider { get; set; }
+    public Func<SurveyStatus?>? SurveyProvider { get; set; }
 
     public IReadOnlyDictionary<string, NodeConnection> Connections => _connections;
 
@@ -159,7 +163,19 @@ public sealed class HubState(HubStore store, HubSettingsStore settings)
         }
 
         var bands = _connections.Values.Select(c => c.Hello?.BandsHz).FirstOrDefault(b => b is { Count: > 0 }) ?? [];
-        return new HubLive(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), s.HubId, s.Name, Service, nodeViews, mics, _alerts, bands);
+        return new HubLive(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), s.HubId, s.Name, Service, nodeViews, mics, _alerts, bands,
+            ZoneProvider?.Invoke() ?? [], SurveyProvider?.Invoke());
+    }
+
+    /// <summary>Presents a predicted zone as a mic, so alert rules and metrics work the same way.</summary>
+    public static MicLiveView ZoneAsMic(ZoneLiveView z)
+    {
+        static double V(double? v) => v ?? Db.FloorDb;
+        LiveMic? live = z.LC1s is null ? null : new LiveMic(z.Id, V(z.LA1s), V(z.LC1s), V(z.LA1s), V(z.LC1s),
+            V(z.LAeq1m), V(z.LCeq1m), V(z.LAeq15m), V(z.LCeq15m), Db.FloorDb,
+            z.LCeq1m is double c && z.LAeq1m is double a ? Math.Round(c - a, 1) : 0, z.LCeq1m is null ? 0 : 60, true, false, z.Bands ?? [], z.Issues);
+        return new MicLiveView(z.Key, HubStore.ZoneNodeId, "Zones", z.Id, z.Name, z.Name, null, "Predicted", null, null, true, false,
+            live is not null, live, z.LAeqService, z.LCeqService, 0);
     }
 
     /// <summary>Current value of a metric for one mic, or null if unavailable.</summary>

@@ -3,6 +3,8 @@ using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Http.Json;
 using Rta.App;
 using Rta.App.Hub;
+using Rta.App.Hub.Integrations;
+using Rta.App.Hub.Reports;
 using Rta.App.Node;
 using Rta.App.Security;
 using Rta.Core.Calibration;
@@ -57,6 +59,15 @@ if (mode.RunsHub)
     builder.Services.AddSingleton<HubSettingsStore>();
     builder.Services.AddSingleton<HubState>();
     builder.Services.AddSingleton<NodeIngest>();
+    builder.Services.AddSingleton<PlanStore>();
+    builder.Services.AddSingleton<ZoneEngine>();
+    builder.Services.AddHostedService(sp => sp.GetRequiredService<ZoneEngine>());
+    builder.Services.AddHttpClient<ProPresenterClient>(c => c.Timeout = TimeSpan.FromSeconds(3));
+    builder.Services.AddHttpClient("webhooks", c => c.Timeout = TimeSpan.FromSeconds(10));
+    builder.Services.AddSingleton<IntegrationService>();
+    builder.Services.AddHostedService(sp => sp.GetRequiredService<IntegrationService>());
+    builder.Services.AddSingleton<ReportService>();
+    builder.Services.AddHostedService(sp => sp.GetRequiredService<ReportService>());
     builder.Services.AddHostedService<HubBeaconService>();
     builder.Services.AddHostedService<ServiceScheduler>();
     builder.Services.AddHostedService<AlertEngine>();
@@ -75,7 +86,15 @@ app.Use(async (ctx, next) =>
     await next();
 });
 app.UseDefaultFiles();
-app.UseStaticFiles();
+app.UseStaticFiles(new StaticFileOptions
+{
+    // Pages must revalidate so dashboard updates show up; hashed /assets files can be cached.
+    OnPrepareResponse = ctx =>
+    {
+        var path = ctx.Context.Request.Path.Value ?? "";
+        ctx.Context.Response.Headers.CacheControl = path.StartsWith("/assets/") ? "public, max-age=31536000, immutable" : "no-cache";
+    },
+});
 app.UseRouting();
 app.UseAuthentication();
 app.UseAdminGuard();
@@ -83,7 +102,12 @@ app.UseAdminGuard();
 app.MapGet("/api/app", () => new { role = mode.Role, runsNode = mode.RunsNode, runsHub = mode.RunsHub, version = AppMode.Version });
 app.MapAuthEndpoints();
 if (mode.RunsNode) app.MapNodeEndpoints();
-if (mode.RunsHub) app.MapHubEndpoints();
+if (mode.RunsHub)
+{
+    app.MapHubEndpoints();
+    app.MapZoneEndpoints();
+    app.MapIntegrationEndpoints();
+}
 
 // Client-side routes of the dashboard (e.g. /history) fall back to its index.html.
 if (mode.RunsHub)
@@ -92,6 +116,7 @@ if (mode.RunsHub)
         var index = env.WebRootFileProvider.GetFileInfo("index.html");
         if (ctx.Request.Path.StartsWithSegments("/api") || !index.Exists) { ctx.Response.StatusCode = 404; return; }
         ctx.Response.ContentType = "text/html";
+        ctx.Response.Headers.CacheControl = "no-cache";
         await ctx.Response.SendFileAsync(index);
     });
 

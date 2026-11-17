@@ -38,6 +38,37 @@ export interface ServiceLive { id: number; name: string; startTs: number; source
 export interface HubLive {
   t: number; hubId: string; hubName: string; service: ServiceLive | null;
   nodes: NodeView[]; mics: MicView[]; alerts: ActiveAlert[]; bandsHz: number[];
+  zones: ZoneView[]; survey: SurveyStatus | null;
+}
+
+export interface ZoneView {
+  id: number; key: string; name: string; floorId: string; mode: 'Replace' | 'Average';
+  surveyed: boolean; surveys: number; confidence: number; stale: boolean; bandMode: boolean; issues: string[];
+  lA1s: number | null; lC1s: number | null; lAeq1m: number | null; lCeq1m: number | null;
+  lAeq15m: number | null; lCeq15m: number | null; lAeqService: number | null; lCeqService: number | null;
+  bands: number[] | null; refsUsed: number; refsInModel: number;
+}
+
+export interface SurveyStatus {
+  zoneId: number; zoneName: string; roverKey: string; roverLabel: string; startTs: number;
+  seconds: number; minSeconds: number; confidence: number; roverLC: number | null; roverLA: number | null;
+  refs: { micKey: string; label: string; offset: number | null; chunkStd: number | null; chunks: number }[];
+  warnings: string[];
+}
+
+export interface Pt { x: number; y: number }
+export interface PlanShape { id: string; kind: string; points: Pt[]; label: string | null }
+export interface PlanZone { id: number; name: string; points: Pt[]; mode: 'Replace' | 'Average' }
+export interface MicPlacement { micKey: string; x: number; y: number; role: 'Permanent' | 'Roving' }
+export interface Underlay { imageId: string; x: number; y: number; width: number; height: number; opacity: number }
+export interface Floor { id: string; name: string; width: number; height: number; underlay: Underlay | null; shapes: PlanShape[]; zones: PlanZone[]; mics: MicPlacement[] }
+export interface Plan { floors: Floor[] }
+
+export interface SurveyView {
+  id: number; zoneId: number; kind: 'measured' | 'manual'; startTs: number; endTs: number; seconds: number; confidence: number;
+  roverKey: string | null; excluded: boolean; note: string | null; roverLA: number | null; roverLC: number | null;
+  hasBands: boolean; refs: { micKey: string; offsetA: number | null; offsetC: number | null; chunkStdC: number; chunks: number }[];
+  inModel: boolean;
 }
 
 export interface Series {
