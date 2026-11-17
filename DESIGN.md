@@ -1,7 +1,7 @@
 # RTA App — Design
 
 Multi-mic SPL monitoring and zone prediction for a church worship space. Windows-only.
-Status: design agreed 2026-11-17. Phase 1 (Node) built 2026-11-17. Phase 2 (Hub) merged 2026-11-17. Phases 1–3 and 5 are merged to `master`. Phase 4 (NDI) built 2026-11-17 on branch `phase-4`. See README.md.
+Status: design agreed 2026-11-17. Phase 1 (Node) built 2026-11-17. Phase 2 (Hub) merged 2026-11-17. Phases 1–5 merged to `master`. Phase 6 (installer, service, tray) built 2026-11-17 on branch `phase-6`: v1.0.0. See README.md.
 
 ## Goals
 
@@ -209,12 +209,29 @@ Status: design agreed 2026-11-17. Phase 1 (Node) built 2026-11-17. Phase 2 (Hub)
 - **Bandwidth estimate:** video ≈ 125 Mb/s × (pixels / 1080p) × (fps / 60), an upper bound since graphics compress well; audio = channels × rate × 32 bit. Warnings appear above 40 and 100 Mb/s, or more than 8 sources from one PC.
 - **Attribution:** "NDI® is a registered trademark of Vizrt NDI AB" is shown on the NDI settings and in the code. The runtime is not redistributed.
 
+## Decisions made during Phase 6
+
+- **Run mode is chosen at install** (user decision). The design said "Windows service", but many ASIO drivers don't work in a service's session-0, no-user context.
+  - Default for PCs with mics: start at sign-in with a tray icon (pair with Windows auto sign-in for unattended booth PCs).
+  - Default for Hub-only PCs: a Windows service.
+- **Service:**
+  - `RtaApp`, account `NT AUTHORITY\LocalService` (not SYSTEM) with Modify on `C:\ProgramData\RtaApp`.
+  - Delayed auto-start; recovery: restart after 5 s, 10 s, 60 s.
+  - Hosted with `UseWindowsService`; content root = the app folder.
+- **Sign-in mode:** an all-users Startup shortcut runs `RtaTray.exe`, which starts `RtaApp.exe` hidden and restarts it with backoff if it exits. Local Users get Modify on the data folder (trade-off: anyone who can sign in can change RTA data).
+- **Installed settings** live in `<data>\app.json` (`Mode`, `RunAs`, `Urls`), written by setup and overridden by the command line. Re-running setup pre-selects the previous choices.
+- **Upgrade and uninstall order:** close the tray, then `net stop` (waits for a clean stop and doesn't trigger recovery), then delete the service and kill leftovers. A force-kill first made Windows restart the service and lock the files; this was found in testing.
+- **Firewall:** one program rule for `RtaApp.exe`, inbound, private and domain profiles. It covers TCP 5180, the UDP 5181 beacon and NDI's dynamic ports.
+- **Packaging:** Inno Setup 6. RtaApp and RtaTray are published self-contained for win-x64 into one folder; English-only satellite resources; installer ≈ 70 MB. The version comes from `Directory.Build.props` (1.0.0).
+- **Hardening:** daily file logs (14 days); data-protection keys for the sign-in cookie encrypted with DPAPI (machine scope).
+
 ## Open items to verify during build
 
 - ProPresenter API auth requirements (none found in the 7.9 spec) and exact token payload for message triggers — check the in-app "API Documentation" button.
 - ProPresenter 22 release notes mention a fixed Windows bug where API messages didn't show on output — test message triggering on 21.x and 22.x.
 - User reported version "21.0.3"; release notes list 21, 21.0.1, 21.1 — confirm actual installed version.
 - ASIO capture is implemented but not yet tested against the real Focusrite/Behringer hardware (WASAPI and the test signal are).
+- Run the installer on the real booth and Hub PCs, including ASIO at sign-in with Windows auto sign-in, and a reboot test.
 - View the NDI feeds in a real receiver (NDI Studio Monitor, vMix, OBS, ProPresenter) and from a second PC.
 - ProPresenter integration has been tested only against a stand-in HTTP server. Test it on the real ProPresenter 21/22 machine: the stage message, the Message token format, and whether the API needs a password.
 - MIDI output is untested on a real device.

@@ -3,6 +3,7 @@
     <Project Path="src/Rta.App/Rta.App.csproj" />
     <Project Path="src/Rta.Audio/Rta.Audio.csproj" />
     <Project Path="src/Rta.Core/Rta.Core.csproj" />
+    <Project Path="src/Rta.Tray/Rta.Tray.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Rta.Core.Tests/Rta.Core.Tests.csproj" />
