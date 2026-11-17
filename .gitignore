@@ -482,4 +482,9 @@ $RECYCLE.BIN/
 *.swp
 
 # local dev data
-.devdata/
+.devdata*/
+
+# dashboard build output (built from web/ by npm run build or the BuildDashboard target)
+src/Rta.App/wwwroot/index.html
+src/Rta.App/wwwroot/assets/
+web/node_modules/

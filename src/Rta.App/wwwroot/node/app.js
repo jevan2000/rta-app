@@ -7,17 +7,48 @@ const fmt = (v, d = 1) => (v == null || v < FLOOR) ? '—' : v.toFixed(d);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 
-async function api(path, opts = {}) {
+async function api(path, opts = {}, retried = false) {
   const res = await fetch('/api' + path, {
     headers: opts.body && typeof opts.body === 'string' && !opts.raw ? { 'Content-Type': 'application/json' } : {},
     ...opts,
   });
+  if (res.status === 401 && !retried && !path.startsWith('/auth')) {
+    if (await signIn()) return api(path, opts, true);
+  }
   if (!res.ok) {
     let msg = res.statusText;
     try { const j = await res.json(); msg = j.detail || j.title || msg; } catch { /* not json */ }
     throw new Error(msg);
   }
   return res.status === 204 ? null : res.json();
+}
+
+/** Shows the sign-in (or first-time password) dialog. Resolves true once signed in. */
+async function signIn() {
+  const st = await (await fetch('/api/auth/status')).json();
+  const setup = !st.passwordSet;
+  if (setup && !st.local) { alert('Set an admin password on the PC running this node first, then sign in here.'); return false; }
+  $('loginTitle').textContent = setup ? 'Set an admin password' : 'Admin sign-in';
+  $('loginHelp').textContent = setup
+    ? 'Choose a password for changing settings, calibration and the Hub. Viewing stays open to everyone on the network.'
+    : 'Changes need the admin password.';
+  $('loginPw2Wrap').hidden = !setup;
+  $('loginGo').textContent = setup ? 'Set password' : 'Sign in';
+  $('loginPw').value = ''; $('loginPw2').value = ''; $('loginMsg').textContent = '';
+  const dlg = $('login');
+  dlg.showModal();
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (ok) => { if (settled) return; settled = true; $('loginGo').onclick = null; if (dlg.open) dlg.close(); resolve(ok); };
+    dlg.onclose = () => finish(false);
+    $('loginGo').onclick = async () => {
+      if (setup && $('loginPw').value !== $('loginPw2').value) { $('loginMsg').innerHTML = '<span class="warn">Passwords don’t match.</span>'; return; }
+      const r = await fetch(`/api/auth/${setup ? 'setup' : 'login'}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: $('loginPw').value }) });
+      if (r.ok) { finish(true); return; }
+      let msg = r.statusText; try { const j = await r.json(); msg = j.detail || j.title || msg; } catch { /* */ }
+      $('loginMsg').innerHTML = `<span class="warn">${esc(msg)}</span>`;
+    };
+  });
 }
 
 function levelClass(v, warn, alarm) {
@@ -44,6 +75,7 @@ function connect() {
     const msg = JSON.parse(e.data);
     status = msg.status;
     channels = msg.channels;
+    if (msg.hubLink) renderHubLink(msg.hubLink);
     tick++;
     record();
     render();
@@ -73,6 +105,21 @@ function record() {
       history.set(ch.channelIndex, h);
     }
   }
+}
+
+// ---------- hub link ----------
+let hubLink = null;
+const HUB_STATE = {
+  Connected: ['ok', 'Hub: connected'], Pending: ['wait', 'Hub: waiting for approval'], Searching: ['wait', 'Hub: searching…'],
+  Connecting: ['wait', 'Hub: connecting…'], Rejected: ['err', 'Hub: rejected'], Error: ['err', 'Hub: error'], Off: ['', 'Hub: off'],
+};
+function renderHubLink(h) {
+  hubLink = h;
+  const [cls, text] = HUB_STATE[h.state] ?? ['', 'Hub: ' + h.state];
+  const el = $('hubLink');
+  el.className = 'hub-pill ' + cls;
+  el.textContent = text + (h.unsentRecords > 30 ? ` · ${h.unsentRecords} unsent` : '');
+  el.title = [h.hubName, h.message].filter(Boolean).join(' — ');
 }
 
 // ---------- rendering ----------
@@ -271,6 +318,9 @@ async function openSettings() {
   $('sMsg').textContent = '';
   $('sName').value = draftConfig.nodeName;
   $('sAuto').checked = draftConfig.autoStart;
+  $('sHubMode').value = draftConfig.hubConnection ?? 'Auto';
+  $('sHubAddr').value = draftConfig.hubAddress ?? '';
+  onHubModeChange();
   for (const k of ['warnC', 'alarmC', 'warnA', 'alarmA']) $('t' + k[0].toUpperCase() + k.slice(1)).value = draftConfig.thresholds[k];
   $('sDevice').innerHTML = devices.map((d, i) =>
     `<option value="${i}">${esc(d.backend === 'TestSignal' ? d.name : `${d.backend} · ${d.name}`)}${d.inputChannels ? ` (${d.inputChannels} in)` : ''}</option>`).join('');
@@ -292,6 +342,15 @@ function onDeviceChange(changed = true) {
     : Array.from({ length: d.inputChannels }, (_, i) => ({ channelIndex: i, enabled: i < 8, name: `Mic ${i + 1}`, micLabel: '', profileId: null }));
   renderInputs(inputs, d);
   if (changed && !sameDevice) $('sMsg').textContent = 'New device: inputs reset.';
+}
+
+function onHubModeChange() {
+  const m = $('sHubMode').value;
+  $('sHubAddrWrap').hidden = m !== 'Manual';
+  const found = hubLink?.discovered ?? [];
+  $('sHubInfo').textContent = m === 'Off' ? 'Readings stay on this PC only.'
+    : m === 'Auto' ? (found.length ? `Found on the network: ${found.map((h) => h.name).join(', ')}.` : 'No Hub found on the network yet. If the Hub is on another subnet, use a fixed address.')
+    : 'Use the Hub PC’s IP address and port (default 5180).';
 }
 
 function onRateChange() { $('sRateWarn').hidden = +$('sRate').value <= 48000; }
@@ -328,6 +387,8 @@ async function saveSettings() {
     nodeName: $('sName').value.trim() || draftConfig.nodeName,
     backend: d.backend, deviceId: d.id, sampleRate: +$('sRate').value,
     autoStart: $('sAuto').checked,
+    hubConnection: $('sHubMode').value,
+    hubAddress: $('sHubAddr').value.trim() || null,
     inputs: readInputs(),
     thresholds: { warnC: +$('tWarnC').value, alarmC: +$('tAlarmC').value, warnA: +$('tWarnA').value, alarmA: +$('tAlarmA').value },
   };
@@ -563,6 +624,8 @@ $('btnReset').onclick = async () => {
   await api('/session/reset', { method: 'POST' });
 };
 $('btnSettings').onclick = openSettings;
+$('sHubMode').onchange = onHubModeChange;
+fetch('/api/app').then((r) => r.json()).then((a) => { $('lnkDash').hidden = !a.runsHub; }).catch(() => {});
 $('btnCal').onclick = openCalibration;
 $('sDevice').onchange = () => onDeviceChange(true);
 $('sRate').onchange = onRateChange;

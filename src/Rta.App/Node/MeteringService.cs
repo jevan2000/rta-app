@@ -2,7 +2,9 @@ using System.Threading.Channels;
 using Rta.Audio;
 using Rta.Core.Calibration;
 using Rta.Core.Dsp;
+using Rta.Core.Logging;
 using Rta.Core.Metering;
+using Rta.Core.Protocol;
 
 namespace Rta.App.Node;
 
@@ -41,8 +43,12 @@ public sealed class MeteringService(NodeConfigStore configStore, CalibrationStor
         public InputConfig Config { get; set; } = config;
         public ChannelMeter Meter { get; } = meter;
         public LevelAggregator Aggregator { get; } = aggregator;
+        public RecordBuilder? Records { get; set; }
         public List<Tap> Taps { get; } = [];
     }
+
+    /// <summary>Per-second and per-minute records for logging (fired on the metering thread).</summary>
+    public event Action<LevelRecord>? RecordReady;
 
     private sealed class Tap(TimeSpan duration, DateTimeOffset startAfter)
     {
@@ -126,6 +132,8 @@ public sealed class MeteringService(NodeConfigStore configStore, CalibrationStor
                 var meter = new ChannelMeter(input.SampleRate);
                 var agg = new LevelAggregator(meter.Bands);
                 var p = new Pipeline(ic, meter, agg);
+                p.Records = new RecordBuilder(ic.ChannelIndex, meter.Bands, () => ProfileFor(p.Config));
+                p.Records.RecordReady += r => RecordReady?.Invoke(r);
                 meter.BlockReady += b => OnBlock(p, b);
                 pipelines[ic.ChannelIndex] = p;
             }
@@ -151,7 +159,10 @@ public sealed class MeteringService(NodeConfigStore configStore, CalibrationStor
         _worker = null;
         _queue = null;
         foreach (var p in _pipelines.Values)
+        {
+            try { p.Records?.Flush(); } catch (Exception ex) { log.LogWarning(ex, "Flushing records failed"); }
             lock (p.Taps) foreach (var t in p.Taps) t.Done.TrySetCanceled();
+        }
     }
 
     private void OnSamples(ReadOnlySpan<float> interleaved, int channels)
@@ -180,9 +191,12 @@ public sealed class MeteringService(NodeConfigStore configStore, CalibrationStor
         }
     }
 
-    private static void OnBlock(Pipeline p, MeterBlock b)
+    private CalibrationProfile? ProfileFor(InputConfig ic) => ic.ProfileId is null ? null : calibration.Get(ic.ProfileId);
+
+    private void OnBlock(Pipeline p, MeterBlock b)
     {
         p.Aggregator.Add(b);
+        try { p.Records?.Add(b); } catch (Exception ex) { log.LogWarning(ex, "Record logging failed"); }
         lock (p.Taps)
         {
             for (var i = p.Taps.Count - 1; i >= 0; i--)
@@ -205,6 +219,7 @@ public sealed class MeteringService(NodeConfigStore configStore, CalibrationStor
         if (!NodeConfig.AllowedSampleRates.Contains(next.SampleRate))
             throw new ArgumentException($"Sample rate must be one of {string.Join(", ", NodeConfig.AllowedSampleRates)}.");
         var prev = Config;
+        next = next with { NodeId = prev.NodeId }; // identity is never changed from the UI
         var deviceChanged = next.Backend != prev.Backend || next.DeviceId != prev.DeviceId || next.SampleRate != prev.SampleRate;
         configStore.Save(next);
         Config = next;
@@ -302,6 +317,27 @@ public sealed class MeteringService(NodeConfigStore configStore, CalibrationStor
                 profile?.Quality, profile?.UncertaintyDb, warnings, snap));
         }
         return list;
+    }
+
+    public bool IsRunning => _input is not null && _error is null;
+
+    public IReadOnlyList<MicInfo> MicInfos() => Channels()
+        .Select(c => new MicInfo(c.ChannelIndex, c.Name, c.MicLabel, c.ProfileName, c.ProfileQuality, c.ProfileUncertaintyDb, c.Levels?.Calibrated ?? false))
+        .ToList();
+
+    public LiveUpdate BuildLive()
+    {
+        static double R(double v) => Math.Round(v, 1);
+        var status = Status();
+        var mics = Channels().Where(c => c.Levels is not null).Select(c =>
+        {
+            var L = c.Levels!;
+            return new LiveMic(c.ChannelIndex, R(L.LAS), R(L.LCS), R(L.LAF), R(L.LCF),
+                R(L.LAeq1m), R(L.LCeq1m), R(L.LAeq15m), R(L.LCeq15m), R(L.LCpeakMax1m), R(L.CMinusA),
+                Math.Round(L.Coverage1mSeconds), L.Calibrated, L.ClippedRecently,
+                L.Bands.Select(R).ToArray(), c.Warnings);
+        }).ToList();
+        return new LiveUpdate(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), status.Running, status.Error, mics, status.Warnings);
     }
 
     /// <summary>Device list. A driver we are currently capturing from is reported from the live input (ASIO drivers are usually single-client).</summary>

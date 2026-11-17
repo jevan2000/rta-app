@@ -2,10 +2,16 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "node",
+      "name": "app",
       "runtimeExecutable": "C:/Program Files/dotnet/dotnet.exe",
-      "runtimeArgs": ["run", "--project", "src/Rta.App", "--no-launch-profile", "--", "--Urls", "http://localhost:5180", "--DataDir", ".devdata"],
+      "runtimeArgs": ["run", "--project", "src/Rta.App", "--no-launch-profile", "--", "--Mode", "Both", "--Urls", "http://0.0.0.0:5180", "--DataDir", ".devdata"],
       "port": 5180
+    },
+    {
+      "name": "node2",
+      "runtimeExecutable": "C:/Program Files/dotnet/dotnet.exe",
+      "runtimeArgs": ["run", "--project", "src/Rta.App", "--no-launch-profile", "--", "--Mode", "Node", "--Urls", "http://localhost:5190", "--DataDir", ".devdata-node2"],
+      "port": 5190
     }
   ]
 }

@@ -22,9 +22,17 @@ public sealed record Thresholds
     public double AlarmA { get; init; } = 97;
 }
 
+public enum HubConnectionMode { Auto, Manual, Off }
+
 public sealed record NodeConfig
 {
+    /// <summary>Stable identity of this node (generated on first run).</summary>
+    public string NodeId { get; init; } = "";
     public string NodeName { get; init; } = Environment.MachineName;
+    /// <summary>How this node finds the Hub: auto-discover on the LAN, a fixed address, or not at all.</summary>
+    public HubConnectionMode HubConnection { get; init; } = HubConnectionMode.Auto;
+    /// <summary>For Manual: "host:port" or a URL, e.g. "192.168.1.20:5180".</summary>
+    public string? HubAddress { get; init; }
     public AudioBackend Backend { get; init; } = AudioBackend.TestSignal;
     public string DeviceId { get; init; } = TestSignalInput.DeviceId;
     public int SampleRate { get; init; } = 48000;
@@ -57,19 +65,31 @@ public sealed class NodeConfigStore(NodePaths paths)
     {
         lock (_lock)
         {
-            if (!File.Exists(paths.ConfigFile)) return new NodeConfig();
-            try { return JsonSerializer.Deserialize<NodeConfig>(File.ReadAllText(paths.ConfigFile), CalibrationStore.Json) ?? new NodeConfig(); }
-            catch (JsonException) { return new NodeConfig(); }
+            NodeConfig cfg;
+            if (!File.Exists(paths.ConfigFile)) cfg = new NodeConfig();
+            else
+            {
+                try { cfg = JsonSerializer.Deserialize<NodeConfig>(File.ReadAllText(paths.ConfigFile), CalibrationStore.Json) ?? new NodeConfig(); }
+                catch (JsonException) { cfg = new NodeConfig(); }
+            }
+            if (string.IsNullOrWhiteSpace(cfg.NodeId))
+            {
+                cfg = cfg with { NodeId = Guid.NewGuid().ToString("N") };
+                SaveLocked(cfg);
+            }
+            return cfg;
         }
     }
 
     public void Save(NodeConfig config)
     {
-        lock (_lock)
-        {
-            var tmp = paths.ConfigFile + ".tmp";
-            File.WriteAllText(tmp, JsonSerializer.Serialize(config, CalibrationStore.Json));
-            File.Move(tmp, paths.ConfigFile, overwrite: true);
-        }
+        lock (_lock) SaveLocked(config);
+    }
+
+    private void SaveLocked(NodeConfig config)
+    {
+        var tmp = paths.ConfigFile + ".tmp";
+        File.WriteAllText(tmp, JsonSerializer.Serialize(config, CalibrationStore.Json));
+        File.Move(tmp, paths.ConfigFile, overwrite: true);
     }
 }

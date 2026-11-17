@@ -106,3 +106,10 @@ table.profiles td button { padding: 2px 8px; font-size: 12px; }
   .detail-grid { grid-template-columns: 1fr; }
   .result { grid-template-columns: repeat(2, 1fr); }
 }
+
+.hub-pill { font-size: 12px; padding: 2px 9px; border-radius: 10px; border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
+.hub-pill.ok { color: var(--ok); border-color: var(--ok); }
+.hub-pill.wait { color: var(--warn); border-color: var(--warn); }
+.hub-pill.err { color: var(--alarm); border-color: var(--alarm); }
+.btnlink { background: var(--panel-2); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 6px 12px; text-decoration: none; }
+.btnlink:hover { border-color: var(--accent); }
