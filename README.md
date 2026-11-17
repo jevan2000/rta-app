@@ -2,7 +2,7 @@
 
 Multi-mic SPL monitoring (A/C-weighted) for a worship space. See [DESIGN.md](DESIGN.md) for the full design and build phases.
 
-## Status: Phase 3 (survey and zone prediction)
+## Status: Phase 5 (integrations and reports); Phase 4 (NDI) still to come
 
 **Phase 1: Node**
 - Audio capture:
@@ -76,9 +76,32 @@ Multi-mic SPL monitoring (A/C-weighted) for a worship space. See [DESIGN.md](DES
   - If a permanent mic is moved on the plan, removed or offline, the zone is flagged and keeps predicting at lower confidence.
   - Recalibrating a permanent mic after a survey is **compensated automatically**.
 
-**Not yet (later phases):**
-- NDI (Phase 4).
-- OSC, HTTP, MIDI, ProPresenter and webhooks, plus PDF and CSV reports (Phase 5).
+**Phase 5: integrations and reports** (dashboard → **Integrations**; built before Phase 4)
+- **ProPresenter** (7.9+, including 21 and 22, via its network API):
+  - Alarms (and optionally warnings) appear as a **stage-display message**, for example "LEVEL ALARM: Balcony 104 dBC (limit 103)", and clear when the level drops.
+  - An optional live level line on the stage display.
+  - An opt-in **Message** readout with a text token, for the audience output. It's off by default.
+  - A **Test** button checks the connection and shows a test stage message for 4 s.
+- **OSC** to any number of targets:
+  - Levels at `/rta/mic/<name>/<measure>` and `/rta/zone/<name>/<measure>`.
+  - Alert state at `…/alert`, as 0, 1 or 2.
+  - `/rta/alert` the moment an alert changes, and `/rta/service/active`.
+- **MIDI out:**
+  - A CC per chosen level, scaled over a dB range to 0–127.
+  - A note held while any warning or alarm is active.
+- **Webhooks:** JSON POSTs on alert start, escalate and clear and on service start and end (Teams/Slack workflows, Home Assistant, Zapier…), with retries.
+- **Read-only HTTP and WebSocket API** (no sign-in):
+  - `/api/v1/levels` (JSON).
+  - `/api/v1/levels/<name>/<measure>`: the plain number as text, for vMix/OBS text sources or Companion.
+  - `/ws/v1/levels?hz=2`: the same JSON, streamed.
+- **PDF service reports:**
+  - Written automatically about 90 s after each service ends, to a folder you choose (a synced or shared folder works well).
+  - Also open from any service's page.
+  - Contents: Leq per mic and zone, maximum 1-min LCeq, peak, time above the warn and alarm levels, a level chart, alerts, and calibration notes.
+- **CSV export:** per second (or per minute for long ranges) for any mics and zones from History, or everything for a service. Spreadsheet formulas in names are neutralised.
+
+**Not yet:**
+- NDI outputs (Phase 4). This needs the NDI SDK/runtime, which you install yourself under NDI's license.
 - Windows service installer (Phase 6).
 
 ## Run
@@ -169,5 +192,8 @@ cd web && npm run typecheck
 - At 48 kHz the 20 kHz band is squeezed near Nyquist (about 12 dB adjacent-band rejection instead of 18 dB). The band is kept so 48 and 96 kHz nodes report the same band set.
 - WASAPI runs at the rate set in Windows Sound settings, and Windows "audio enhancements" must be off for the input.
 - The node page's own graphs still keep history only in the browser. Stored history is on the Hub dashboard.
+- The ProPresenter Message readout sends the token in the v1 API's documented trigger format. Versions differ, so confirm it with your ProPresenter (the stage message path is the standard one).
+- MIDI has been built against the Windows MIDI API but not yet tried with a real device or loopMIDI.
+- PDF reports use QuestPDF under its Community license (free for organisations under US$1M annual revenue). Check its terms before distributing the app.
 - Zone predictions are made live on the Hub. Readings a node backfills after an outage are stored for the mics, but zone history for that gap is not reconstructed.
 - Mic identity on the Hub is node + input number. Moving a mic to another input or PC creates a new entry; the old history stays under the old one.

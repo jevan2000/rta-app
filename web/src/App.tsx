@@ -11,6 +11,7 @@ import { SettingsPage } from './pages/SettingsPage';
 import { RoomPage } from './pages/RoomPage';
 import { PlanPage } from './pages/PlanPage';
 import { SurveyPage } from './pages/SurveyPage';
+import { IntegrationsPage } from './pages/IntegrationsPage';
 
 interface Ctx {
   live: HubLive | null;
@@ -24,7 +25,7 @@ const AppCtx = createContext<Ctx>(null!);
 export const useApp = () => useContext(AppCtx);
 
 const ROUTES: [string, string][] = [
-  ['live', 'Live'], ['room', 'Room'], ['history', 'History'], ['services', 'Services'], ['alerts', 'Alerts'], ['nodes', 'Nodes'], ['plan', 'Plan'], ['survey', 'Survey'], ['settings', 'Settings'],
+  ['live', 'Live'], ['room', 'Room'], ['history', 'History'], ['services', 'Services'], ['alerts', 'Alerts'], ['nodes', 'Nodes'], ['plan', 'Plan'], ['survey', 'Survey'], ['integrations', 'Integrations'], ['settings', 'Settings'],
 ];
 
 function useHashRoute() {
@@ -107,6 +108,7 @@ export function App() {
         {page === 'room' && <RoomPage />}
         {page === 'plan' && <PlanPage />}
         {page === 'survey' && <SurveyPage />}
+        {page === 'integrations' && <IntegrationsPage />}
         {page === 'history' && <HistoryPage />}
         {page === 'services' && <ServicesPage id={arg || undefined} />}
         {page === 'alerts' && <AlertsPage />}

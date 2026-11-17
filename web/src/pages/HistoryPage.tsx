@@ -87,7 +87,9 @@ export function HistoryPage() {
         ))}
       </div>
       <section className="panel">
-        <h3>{weighting === 'lc' ? 'LCeq' : 'LAeq'} <span className="muted">({chart?.resolution === 'minute' ? 'per minute' : 'per second'}; ranges over 3 h use minute data)</span></h3>
+        <h3>{weighting === 'lc' ? 'LCeq' : 'LAeq'} <span className="spacer" />
+          {keys.length > 0 && <a className="btnlink small" href={`/api/hub/export.csv?mics=${keys.map(encodeURIComponent).join(',')}&from=${from}&to=${Math.min(to, nowSec())}`}>Export CSV</a>}
+          <span className="muted">({chart?.resolution === 'minute' ? 'per minute' : 'per second'}; ranges over 3 h use minute data)</span></h3>
         {loading && !chart ? <Empty>Loading…</Empty> : chart && chart.xs.length ? (
           <TimeChart x={chart.xs} series={chart.lines} height={320} xRange={[from, Math.min(to, nowSec())]} />
         ) : <Empty>No data for the selected mics and range.</Empty>}

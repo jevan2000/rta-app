@@ -113,6 +113,8 @@ function ServiceDetail({ id }: { id: number }) {
         <h2>{s.name}</h2>
         {running && <span className="pill ok">running</span>}
         <span className="spacer" />
+        <a className="btnlink" href={`/api/hub/services/${id}/report.pdf`} target="_blank" rel="noreferrer">PDF report</a>
+        <a className="btnlink" href={`/api/hub/services/${id}/export.csv`}>CSV (per second)</a>
         <button className="ghost" onClick={rename}>Rename</button>
         <button className="ghost" onClick={remove}>Delete</button>
       </div>

@@ -1,7 +1,7 @@
 # RTA App — Design
 
 Multi-mic SPL monitoring and zone prediction for a church worship space. Windows-only.
-Status: design agreed 2026-11-17. Phase 1 (Node) built 2026-11-17. Phase 2 (Hub) merged 2026-11-17. Phase 3 (survey and prediction) built 2026-11-17 on branch `phase-3`. See README.md.
+Status: design agreed 2026-11-17. Phase 1 (Node) built 2026-11-17. Phase 2 (Hub) merged 2026-11-17. Phase 3 (survey and prediction) in PR #2. Phase 5 (integrations and reports) built 2026-11-17 on branch `phase-5`, ahead of Phase 4 at the user's request. See README.md.
 
 ## Goals
 
@@ -173,11 +173,37 @@ Status: design agreed 2026-11-17. Phase 1 (Node) built 2026-11-17. Phase 2 (Hub)
 - **Plan** is stored as `plan.json` in metres. Zone ids are Hub-wide integers and never reused. Underlay images (PNG/JPEG/WebP, ≤ 15 MB, checked by magic bytes; SVG is refused) live in `plan-images/`.
 - **Caching:** HTML is served `no-cache`; hashed `/assets` are cached for a year, so dashboard updates load straight away.
 
+## Decisions made during Phase 5
+
+- **Order:** Phase 5 was built before Phase 4 (NDI). Reports and the ProPresenter alarm are more useful week to week, and Phase 4 needs the NDI SDK, which the user installs under NDI's license.
+- **One integration loop** (`IntegrationService`) runs every 200 ms on the Hub snapshot:
+  - It detects alert start, escalate, de-escalate and clear, and service start and end, by comparing ticks.
+  - Each output keeps its own rate and a status for the UI.
+  - Alert clears report the last known alert details.
+- **Stable names for other systems:** mic and zone labels are turned into slugs (lowercase, accents stripped, `_`). Duplicate names get the node name added. Measures: lcs, las, lceq1m, laeq1m, lceq15m, laeq15m, lceqservice, laeqservice, lcpeak1m, cminusa.
+- **ProPresenter:**
+  - The stage message (`PUT/DELETE /v1/stage/message`) carries alarms, which override the optional readout line.
+  - The Message readout (`POST /v1/message/{id}/trigger` with `[{name, text:{text}}]`) is opt-in because it can reach the audience output.
+  - Updates go out at most once a second and only when the text changes.
+  - All request bodies are sent with a Content-Length: some embedded HTTP servers can't read chunked uploads, which .NET's `*AsJsonAsync` uses.
+- **MIDI:** NAudio.Midi 2.2.1 (it matches the other NAudio 2.2.1 packages; 3.x would force an NAudio.Core upgrade). CCs are sent on change and refreshed every 5 s; warn and alarm notes are held while active.
+- **Webhooks** are queued (bounded, oldest dropped) and retried twice with backoff.
+- **Integration tests** need admin, since they send real messages. The `/api/v1` levels API is read-only and open, like the dashboard.
+- **Reports:**
+  - QuestPDF (Community license), Letter size.
+  - The chart is an SVG built from 10-s energy averages; uncalibrated mics are left out of it.
+  - Missing-glyph errors are off, so unusual characters in names can't break a report.
+  - Reports open inline in the browser (`?download=1` to save).
+  - The automatic pass runs every 30 s and writes `<date> <time> <name> (<id>).pdf` once per ended service.
+- **CSV** is long format (one row per source per interval), uses the per-minute table for ranges over 3 h unless asked otherwise, and prefixes `'` to fields starting with `= + - @`.
+
 ## Open items to verify during build
 
 - ProPresenter API auth requirements (none found in the 7.9 spec) and exact token payload for message triggers — check the in-app "API Documentation" button.
 - ProPresenter 22 release notes mention a fixed Windows bug where API messages didn't show on output — test message triggering on 21.x and 22.x.
 - User reported version "21.0.3"; release notes list 21, 21.0.1, 21.1 — confirm actual installed version.
 - ASIO capture is implemented but not yet tested against the real Focusrite/Behringer hardware (WASAPI and the test signal are).
+- ProPresenter integration has been tested only against a stand-in HTTP server. Test it on the real ProPresenter 21/22 machine: the stage message, the Message token format, and whether the API needs a password.
+- MIDI output is untested on a real device.
 - Zone prediction has been tested with test signals only. Validate it in the room: survey a zone, then compare the prediction against the roving mic left in place during a later service.
 - Multi-PC discovery has only been tested with two processes on one PC (the beacon went out over the LAN interface). Test it with a second real PC, and check that Windows Firewall prompts for TCP 5180 and UDP 5181.

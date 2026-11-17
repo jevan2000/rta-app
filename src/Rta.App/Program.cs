@@ -3,6 +3,8 @@ using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Http.Json;
 using Rta.App;
 using Rta.App.Hub;
+using Rta.App.Hub.Integrations;
+using Rta.App.Hub.Reports;
 using Rta.App.Node;
 using Rta.App.Security;
 using Rta.Core.Calibration;
@@ -60,6 +62,12 @@ if (mode.RunsHub)
     builder.Services.AddSingleton<PlanStore>();
     builder.Services.AddSingleton<ZoneEngine>();
     builder.Services.AddHostedService(sp => sp.GetRequiredService<ZoneEngine>());
+    builder.Services.AddHttpClient<ProPresenterClient>(c => c.Timeout = TimeSpan.FromSeconds(3));
+    builder.Services.AddHttpClient("webhooks", c => c.Timeout = TimeSpan.FromSeconds(10));
+    builder.Services.AddSingleton<IntegrationService>();
+    builder.Services.AddHostedService(sp => sp.GetRequiredService<IntegrationService>());
+    builder.Services.AddSingleton<ReportService>();
+    builder.Services.AddHostedService(sp => sp.GetRequiredService<ReportService>());
     builder.Services.AddHostedService<HubBeaconService>();
     builder.Services.AddHostedService<ServiceScheduler>();
     builder.Services.AddHostedService<AlertEngine>();
@@ -98,6 +106,7 @@ if (mode.RunsHub)
 {
     app.MapHubEndpoints();
     app.MapZoneEndpoints();
+    app.MapIntegrationEndpoints();
 }
 
 // Client-side routes of the dashboard (e.g. /history) fall back to its index.html.
