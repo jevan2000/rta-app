@@ -28,7 +28,7 @@ public sealed record Series(string Mic, string Resolution, long[] Ts, double[] L
 /// The Hub's SQLite database. Levels are stored as integer centi-dB (dB×100) to keep a year of
 /// per-second rows compact; seconds are keyed by a numeric mic id.
 /// </summary>
-public sealed class HubStore : IDisposable
+public sealed partial class HubStore : IDisposable
 {
     private readonly SqliteConnection _db;
     private readonly object _lock = new();

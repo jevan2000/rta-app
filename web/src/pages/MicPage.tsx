@@ -4,7 +4,7 @@ import { useApp } from '../App';
 import { Histogram, RtaChart, Spectrogram, TimeChart } from '../components/Charts';
 import { Empty, QualityBadge, Tile, cssVar, levelClass, micTitle, thresholdsFor } from '../components/common';
 import { useFetch, useRules } from '../hooks';
-import type { Series } from '../types';
+import type { MicView, Series, ZoneView } from '../types';
 
 type Range = 'live' | 'service' | 'hour' | 'today';
 const RANGE_LABEL: Record<Range, string> = { live: 'Last 15 min (live)', service: 'This service', hour: 'Last hour', today: 'Today' };
@@ -32,7 +32,8 @@ export function MicPage({ micKey }: { micKey: string }) {
   const { data: rules } = useRules();
   const [range, setRange] = useState<Range>('live');
   const [extra, setExtra] = useState<Extra>('none');
-  const m = live?.mics.find((x) => x.key === micKey);
+  const zone = micKey.startsWith('zones:') ? live?.zones.find((z) => z.key === micKey) ?? null : null;
+  const m = zone ? zoneAsMic(zone) : live?.mics.find((x) => x.key === micKey);
   const serviceStart = live?.service?.startTs ?? null;
   const [from, to] = useMemo(() => rangeBounds(range, serviceStart),
     // recompute bounds every refresh tick (see below) or when the range changes
@@ -63,7 +64,7 @@ export function MicPage({ micKey }: { micKey: string }) {
   }, [s]);
 
   if (!live) return <Empty>Connecting…</Empty>;
-  if (!m) return <Empty>Mic not found. <a href="#/live">Back to Live</a></Empty>;
+  if (!m) return <Empty>{micKey.startsWith('zones:') ? 'Zone not found.' : 'Mic not found.'} <a href={zone ? '#/room' : '#/live'}>Back</a></Empty>;
 
   const L = m.live;
   const tC = thresholdsFor(rules, m.key, 'LCeq1m') ?? thresholdsFor(rules, m.key, 'LCS');
@@ -74,12 +75,15 @@ export function MicPage({ micKey }: { micKey: string }) {
   return (
     <>
       <div className="page-head">
-        <a href="#/live" className="muted">← Live</a>
-        <h2>{micTitle(m)} <span className="muted small">· {m.nodeName}</span></h2>
-        <QualityBadge quality={m.quality} uncertainty={m.uncertaintyDb} calibrated={m.calibrated} />
+        <a href={zone ? '#/room' : '#/live'} className="muted">← {zone ? 'Room' : 'Live'}</a>
+        <h2>{micTitle(m)} <span className="muted small">· {zone ? 'predicted zone' : m.nodeName}</span></h2>
+        {zone
+          ? <span className={`badge ${zone.stale || zone.confidence < 0.5 ? 'rough' : 'cal'}`}>{zone.surveyed ? `${Math.round(zone.confidence * 100)}% confidence` : 'not surveyed'}</span>
+          : <QualityBadge quality={m.quality} uncertainty={m.uncertaintyDb} calibrated={m.calibrated} />}
         {!m.online && <span className="pill err">offline</span>}
       </div>
-      {!m.calibrated && <div className="notice">This mic is uncalibrated: values are dBFS, not dB SPL. Calibrate it on its node’s page.</div>}
+      {zone && <ZoneNotes z={zone} />}
+      {!zone && !m.calibrated && <div className="notice">This mic is uncalibrated: values are dBFS, not dB SPL. Calibrate it on its node’s page.</div>}
       {(m.quality === 'Low' || m.quality === 'VeryLow') && <div className="notice">Calibrated with an unreliable method ({m.profileName}). Treat values as approximate.</div>}
 
       <div className="toolbar">
@@ -150,5 +154,33 @@ function HistogramSection({ micKey, from, to, guide }: { micKey: string; from: n
       <h3>Time at each level <span className="muted">(seconds per dB, 1-s Leq; <span style={{ color: 'var(--c)' }}>C</span> / <span style={{ color: 'var(--a)' }}>A</span>)</span></h3>
       {data ? <Histogram db={data.db} a={data.secondsA} c={data.secondsC} guides={guide != null ? [{ value: guide, color: cssVar('--warn') }] : []} /> : <Empty>Loading…</Empty>}
     </section>
+  );
+}
+
+/** Presents a predicted zone like a mic so the same graphs work. */
+function zoneAsMic(z: ZoneView): MicView {
+  const v = (x: number | null) => x ?? -200;
+  return {
+    key: z.key, nodeId: 'zones', nodeName: 'Zones', channelIndex: z.id, name: z.name, label: z.name, micLabel: null,
+    profileName: 'Predicted', quality: null, uncertaintyDb: null, calibrated: true, hidden: false,
+    online: z.lC1s != null,
+    live: z.lC1s == null ? null : {
+      ch: z.id, las: v(z.lA1s), lcs: v(z.lC1s), laf: v(z.lA1s), lcf: v(z.lC1s),
+      lAeq1m: v(z.lAeq1m), lCeq1m: v(z.lCeq1m), lAeq15m: v(z.lAeq15m), lCeq15m: v(z.lCeq15m),
+      lCpeakMax1m: -200, cMinusA: z.lCeq1m != null && z.lAeq1m != null ? z.lCeq1m - z.lAeq1m : 0, coverage1m: z.lCeq1m != null ? 60 : 0,
+      calibrated: true, clipped: false, bands: z.bands ?? [], warnings: [],
+    },
+    lAeqService: z.lAeqService, lCeqService: z.lCeqService, serviceSeconds: 0,
+  };
+}
+
+function ZoneNotes({ z }: { z: ZoneView }) {
+  return (
+    <div className={z.stale || !z.surveyed ? 'notice' : 'panel small'}>
+      {z.surveyed
+        ? <>Predicted from {z.refsUsed} of {z.refsInModel} permanent mic{z.refsInModel === 1 ? '' : 's'} using {z.surveys} survey{z.surveys === 1 ? '' : 's'} ({z.bandMode ? 'per-band model' : 'single-number model'}) · confidence {Math.round(z.confidence * 100)}%. “Now” values are 1-second Leq. <a href="#/survey">Surveys</a></>
+        : <>This zone hasn’t been surveyed yet. <a href="#/survey">Survey it</a> to get predictions.</>}
+      {z.issues.filter((i) => i !== 'Not surveyed yet.').map((i) => <div key={i} className="warn">{i}</div>)}
+    </div>
   );
 }

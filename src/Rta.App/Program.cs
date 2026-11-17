@@ -57,6 +57,9 @@ if (mode.RunsHub)
     builder.Services.AddSingleton<HubSettingsStore>();
     builder.Services.AddSingleton<HubState>();
     builder.Services.AddSingleton<NodeIngest>();
+    builder.Services.AddSingleton<PlanStore>();
+    builder.Services.AddSingleton<ZoneEngine>();
+    builder.Services.AddHostedService(sp => sp.GetRequiredService<ZoneEngine>());
     builder.Services.AddHostedService<HubBeaconService>();
     builder.Services.AddHostedService<ServiceScheduler>();
     builder.Services.AddHostedService<AlertEngine>();
@@ -75,7 +78,15 @@ app.Use(async (ctx, next) =>
     await next();
 });
 app.UseDefaultFiles();
-app.UseStaticFiles();
+app.UseStaticFiles(new StaticFileOptions
+{
+    // Pages must revalidate so dashboard updates show up; hashed /assets files can be cached.
+    OnPrepareResponse = ctx =>
+    {
+        var path = ctx.Context.Request.Path.Value ?? "";
+        ctx.Context.Response.Headers.CacheControl = path.StartsWith("/assets/") ? "public, max-age=31536000, immutable" : "no-cache";
+    },
+});
 app.UseRouting();
 app.UseAuthentication();
 app.UseAdminGuard();
@@ -83,7 +94,11 @@ app.UseAdminGuard();
 app.MapGet("/api/app", () => new { role = mode.Role, runsNode = mode.RunsNode, runsHub = mode.RunsHub, version = AppMode.Version });
 app.MapAuthEndpoints();
 if (mode.RunsNode) app.MapNodeEndpoints();
-if (mode.RunsHub) app.MapHubEndpoints();
+if (mode.RunsHub)
+{
+    app.MapHubEndpoints();
+    app.MapZoneEndpoints();
+}
 
 // Client-side routes of the dashboard (e.g. /history) fall back to its index.html.
 if (mode.RunsHub)
@@ -92,6 +107,7 @@ if (mode.RunsHub)
         var index = env.WebRootFileProvider.GetFileInfo("index.html");
         if (ctx.Request.Path.StartsWithSegments("/api") || !index.Exists) { ctx.Response.StatusCode = 404; return; }
         ctx.Response.ContentType = "text/html";
+        ctx.Response.Headers.CacheControl = "no-cache";
         await ctx.Response.SendFileAsync(index);
     });
 

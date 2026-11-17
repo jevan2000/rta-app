@@ -9,7 +9,7 @@ const METRICS = Object.keys(METRIC_LABEL) as AlertMetric[];
 
 export function AlertsPage() {
   const { live } = useApp();
-  const label = (key: string) => live?.mics.find((m) => m.key === key)?.label ?? key;
+  const label = (key: string) => live?.mics.find((m) => m.key === key)?.label ?? live?.zones.find((z) => z.key === key)?.name ?? key;
   return (
     <>
       <div className="page-head"><h2>Alerts</h2></div>
@@ -61,7 +61,9 @@ function RulesEditor() {
                 <td>
                   <select value={r.target} onChange={(e) => update(i, { target: e.target.value })}>
                     <option value="*">Every mic</option>
+                    <option value="zones:*">Every zone (predicted)</option>
                     {live?.mics.map((m) => <option key={m.key} value={m.key}>{m.label} ({m.nodeName})</option>)}
+                    {live?.zones.map((z) => <option key={z.key} value={z.key}>Zone: {z.name}</option>)}
                   </select>
                 </td>
                 <td><select value={r.metric} onChange={(e) => update(i, { metric: e.target.value as AlertMetric })}>{METRICS.map((m) => <option key={m} value={m}>{METRIC_LABEL[m]}</option>)}</select></td>

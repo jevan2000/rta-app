@@ -45,6 +45,42 @@ public sealed class MeteringService(NodeConfigStore configStore, CalibrationStor
         public LevelAggregator Aggregator { get; } = aggregator;
         public RecordBuilder? Records { get; set; }
         public List<Tap> Taps { get; } = [];
+        public IntervalAccumulator Interval { get; } = new(meter.Bands.Count);
+    }
+
+    /// <summary>Sums blocks between live messages so the Hub gets gap-free band energy.</summary>
+    private sealed class IntervalAccumulator(int bands)
+    {
+        private readonly object _lock = new();
+        private double _a, _c, _z, _dur;
+        private readonly double[] _bands = new double[bands];
+
+        public void Add(MeterBlock b)
+        {
+            lock (_lock)
+            {
+                var d = b.DurationSeconds;
+                _a += b.MsA * d; _c += b.MsC * d; _z += b.MsZ * d; _dur += d;
+                for (var i = 0; i < _bands.Length && i < b.BandMs.Length; i++) _bands[i] += b.BandMs[i] * d;
+            }
+        }
+
+        public IntervalLevels? Drain(CalibrationProfile? profile, IReadOnlyList<OctaveBand> bandInfo)
+        {
+            lock (_lock)
+            {
+                if (_dur <= 0) return null;
+                var off = profile?.OffsetDb ?? 0;
+                double L(double e) => Math.Round(Db.FromMeanSquare(e / _dur) + off, 2);
+                var bands = new double[_bands.Length];
+                for (var i = 0; i < bands.Length; i++)
+                    bands[i] = Math.Round(Db.FromMeanSquare(_bands[i] / _dur) + off - CorrectionCurve.InterpolateDb(profile?.Correction, bandInfo[i].CenterHz), 2);
+                var result = new IntervalLevels(Math.Round(_dur, 3), L(_a), L(_c), L(_z), bands);
+                _a = _c = _z = _dur = 0;
+                Array.Clear(_bands);
+                return result;
+            }
+        }
     }
 
     /// <summary>Per-second and per-minute records for logging (fired on the metering thread).</summary>
@@ -196,6 +232,7 @@ public sealed class MeteringService(NodeConfigStore configStore, CalibrationStor
     private void OnBlock(Pipeline p, MeterBlock b)
     {
         p.Aggregator.Add(b);
+        p.Interval.Add(b);
         try { p.Records?.Add(b); } catch (Exception ex) { log.LogWarning(ex, "Record logging failed"); }
         lock (p.Taps)
         {
@@ -322,20 +359,31 @@ public sealed class MeteringService(NodeConfigStore configStore, CalibrationStor
     public bool IsRunning => _input is not null && _error is null;
 
     public IReadOnlyList<MicInfo> MicInfos() => Channels()
-        .Select(c => new MicInfo(c.ChannelIndex, c.Name, c.MicLabel, c.ProfileName, c.ProfileQuality, c.ProfileUncertaintyDb, c.Levels?.Calibrated ?? false))
+        .Select(c => new MicInfo(c.ChannelIndex, c.Name, c.MicLabel, c.ProfileName, c.ProfileQuality, c.ProfileUncertaintyDb,
+            c.Levels?.Calibrated ?? false, c.Levels?.OffsetDb ?? 0, c.ProfileId))
         .ToList();
+
+    /// <summary>Drains each input's interval accumulator. Call from one consumer only (the Hub client).</summary>
+    private Dictionary<int, IntervalLevels?> DrainIntervals()
+    {
+        var result = new Dictionary<int, IntervalLevels?>();
+        foreach (var p in _pipelines.Values)
+            result[p.Config.ChannelIndex] = p.Interval.Drain(ProfileFor(p.Config), p.Meter.Bands);
+        return result;
+    }
 
     public LiveUpdate BuildLive()
     {
         static double R(double v) => Math.Round(v, 1);
         var status = Status();
+        var intervals = DrainIntervals();
         var mics = Channels().Where(c => c.Levels is not null).Select(c =>
         {
             var L = c.Levels!;
             return new LiveMic(c.ChannelIndex, R(L.LAS), R(L.LCS), R(L.LAF), R(L.LCF),
                 R(L.LAeq1m), R(L.LCeq1m), R(L.LAeq15m), R(L.LCeq15m), R(L.LCpeakMax1m), R(L.CMinusA),
                 Math.Round(L.Coverage1mSeconds), L.Calibrated, L.ClippedRecently,
-                L.Bands.Select(R).ToArray(), c.Warnings);
+                L.Bands.Select(R).ToArray(), c.Warnings, intervals.GetValueOrDefault(c.ChannelIndex));
         }).ToList();
         return new LiveUpdate(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), status.Running, status.Error, mics, status.Warnings);
     }

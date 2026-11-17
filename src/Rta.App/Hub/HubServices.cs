@@ -159,9 +159,17 @@ public sealed class AlertEngine(HubState state, HubStore store, HubSettingsStore
         var seen = new HashSet<(long, string)>();
         var active = new List<ActiveAlertView>();
 
+        var zones = snap.Zones.Where(z => z.Surveyed).Select(HubState.ZoneAsMic).ToList();
         foreach (var rule in rules)
         {
-            foreach (var mic in snap.Mics.Where(m => !m.Hidden && (rule.Target == "*" || rule.Target == m.Key)))
+            // "*" = every mic, "zones:*" = every zone, otherwise one mic or zone key.
+            var targets = rule.Target switch
+            {
+                "*" => snap.Mics.Where(m => !m.Hidden),
+                "zones:*" => zones,
+                _ => snap.Mics.Where(m => !m.Hidden && m.Key == rule.Target).Concat(zones.Where(z => z.Key == rule.Target)),
+            };
+            foreach (var mic in targets)
             {
                 var key = (rule.Id, mic.Key);
                 seen.Add(key);

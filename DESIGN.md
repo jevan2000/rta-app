@@ -1,7 +1,7 @@
 # RTA App — Design
 
 Multi-mic SPL monitoring and zone prediction for a church worship space. Windows-only.
-Status: design agreed 2026-11-17. Phase 1 (Node) built 2026-11-17. Phase 2 (Hub) built 2026-11-17 on branch `phase-2`. See README.md.
+Status: design agreed 2026-11-17. Phase 1 (Node) built 2026-11-17. Phase 2 (Hub) merged 2026-11-17. Phase 3 (survey and prediction) built 2026-11-17 on branch `phase-3`. See README.md.
 
 ## Goals
 
@@ -154,10 +154,30 @@ Status: design agreed 2026-11-17. Phase 1 (Node) built 2026-11-17. Phase 2 (Hub)
 - **Pages**: the dashboard is React + TypeScript (Vite 6, uPlot) at `/`. The node page moved to `/node/`. The dashboard build output is not committed; the csproj builds it when it's missing.
 - **Default listen address**: Hub and Both use `0.0.0.0:5180` (LAN); node-only uses `localhost:5180`.
 
+## Decisions made during Phase 3
+
+- **Gap-free band data:** each live message (5×/s) carries `Interval` levels: calibrated LA, LC, LZ and band Leq over exactly the audio since the previous message. The Hub keeps 15 minutes of these per mic, timestamped on arrival at the Hub. That gives time alignment across nodes to about 0.2 s, which is plenty over a 60 s+ survey.
+- **Survey:**
+  - Accumulates the rover and every permanent (plan) mic over the same window, plus 5-s chunks of the rover−ref dBC offset.
+  - Confidence = duration factor × steadiness (standard error of the chunk offsets) × band coverage (share of the 50 Hz–10 kHz bands with signal).
+  - Manual meter entries use the refs' stored per-second Leq over the stated window and have fixed low confidence (0.2–0.3).
+- **Model per zone:**
+  - Band offsets O[r,b] = zone − ref_r per 1/3-octave band. Bands more than 50 dB below the loudest band during the survey fall back to the broadband offset.
+  - Ref weight = 1/(stderr² + 0.25). The 0.25 floor stands for about 0.5 dB of model error no survey removes.
+  - Prediction: weighted mean across refs per band, then the A/C band sum plus K (rover broadband − band sum, measured in the survey).
+  - Manual-only zones use broadband offsets.
+  - Replace mode uses the newest included survey; Average weights included surveys by confidence.
+- **Calibration compensation:** each survey stores every ref's calibration offset and profile id. Live predictions subtract (current offset − offset at survey), so recalibrating a permanent mic doesn't skew zones. A profile change is reported as information, not as stale.
+- **Stale** = a ref moved more than 0.5 m on the plan, or removed from the plan. Displayed confidence = model confidence × 0.5 if stale × (refs online / refs in model).
+- **Zones are virtual mics** `zones:<zoneId>`, logged per second (1-s predicted Leq) and per minute (with bands) by the Hub. History, services and alerts work unchanged. Alert targets: `*` (all mics), `zones:*` (all zones), or a single key.
+- **Plan** is stored as `plan.json` in metres. Zone ids are Hub-wide integers and never reused. Underlay images (PNG/JPEG/WebP, ≤ 15 MB, checked by magic bytes; SVG is refused) live in `plan-images/`.
+- **Caching:** HTML is served `no-cache`; hashed `/assets` are cached for a year, so dashboard updates load straight away.
+
 ## Open items to verify during build
 
 - ProPresenter API auth requirements (none found in the 7.9 spec) and exact token payload for message triggers — check the in-app "API Documentation" button.
 - ProPresenter 22 release notes mention a fixed Windows bug where API messages didn't show on output — test message triggering on 21.x and 22.x.
 - User reported version "21.0.3"; release notes list 21, 21.0.1, 21.1 — confirm actual installed version.
 - ASIO capture is implemented but not yet tested against the real Focusrite/Behringer hardware (WASAPI and the test signal are).
+- Zone prediction has been tested with test signals only. Validate it in the room: survey a zone, then compare the prediction against the roving mic left in place during a later service.
 - Multi-PC discovery has only been tested with two processes on one PC (the beacon went out over the LAN interface). Test it with a second real PC, and check that Windows Firewall prompts for TCP 5180 and UDP 5181.

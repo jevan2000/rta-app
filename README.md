@@ -2,7 +2,7 @@
 
 Multi-mic SPL monitoring (A/C-weighted) for a worship space. See [DESIGN.md](DESIGN.md) for the full design and build phases.
 
-## Status: Phase 2 (Hub)
+## Status: Phase 3 (survey and zone prediction)
 
 **Phase 1: Node**
 - Audio capture:
@@ -50,8 +50,33 @@ Multi-mic SPL monitoring (A/C-weighted) for a worship space. See [DESIGN.md](DES
   - Until a password is set, changes are allowed only from the Hub PC itself.
 - The node page (audio, inputs, calibration) has moved to `/node/`. It shows the Hub connection status and has Hub settings.
 
+**Phase 3: survey and zone prediction**
+- **Plan editor** (dashboard → **Plan**):
+  - Draw the room in metres on a grid: outline, stage, seating blocks, aisles, walls and text.
+  - Draw **zones** as rectangles or polygons.
+  - Optionally trace over a PNG/JPEG/WebP photo or plan. Multiple floors are supported.
+  - Place each mic as **Permanent** (used for predictions) or **Roving** (the survey mic).
+- **Survey** (dashboard → **Survey**):
+  1. Pick a zone and the roving mic, and press Start.
+  2. Every permanent mic is recorded over exactly the same time, as gap-free 1/3-octave data.
+  3. A confidence bar fills with time and steadiness (minimum 60 s by default).
+  4. Save it, or discard it.
+  - A **handheld meter reading** can be entered instead. It's single-number, so lower confidence.
+- **Model:**
+  - Each zone gets a per-band offset from each permanent mic.
+  - Mics are weighted by how steadily they tracked the zone, and a broadband correction keeps the A/C totals exact.
+  - Predictions follow changes in the mix (for example more bass) band by band, which a single dB offset can't.
+  - Resurveys replace the old data by default, or average with it (set per zone).
+- **Room view** (dashboard → **Room**):
+  - The blueprint with each zone shaded by its predicted level: now (1 s), 1 min, 15 min or service, in dBC or dBA.
+  - Live mic readings shown on the plan.
+  - Click a zone for the same graphs as a mic.
+- **Zones log like mics** (per second and per minute, under `zones:<id>`). They appear in History, service summaries and **alert rules** (per zone or "every zone").
+- **Stale data:**
+  - If a permanent mic is moved on the plan, removed or offline, the zone is flagged and keeps predicting at lower confidence.
+  - Recalibrating a permanent mic after a survey is **compensated automatically**.
+
 **Not yet (later phases):**
-- Survey and zone prediction with the blueprint editor (Phase 3).
 - NDI (Phase 4).
 - OSC, HTTP, MIDI, ProPresenter and webhooks, plus PDF and CSV reports (Phase 5).
 - Windows service installer (Phase 6).
@@ -103,6 +128,22 @@ Set the preamp gain where it will stay, enable the input in **Settings**, and ty
 
 Profiles rated Unreliable or Very rough show a dashed amber **≈** badge on the node page and the dashboard, with a warning line. Editing a profile's offset by hand resets its rating to Unknown.
 
+### Setting up zone prediction
+
+1. **Plan:**
+   - Draw the room and the listening zones (for example "Front center", "Under balcony", "Balcony left").
+   - Place the permanent mics where they really are.
+   - Place the roving mic anywhere, marked *Roving*.
+   - Save.
+2. **Calibrate** the roving mic. Copying from a permanent mic side by side is fine. Uncalibrated permanent mics still work, but a calibrated rover is what makes zone levels real dB SPL.
+3. **Survey:**
+   1. Take the roving laptop to a typical seat in each zone.
+   2. Choose the zone and press Start.
+   3. Let it run for at least a minute of service sound or pink noise, then Stop & save.
+4. **Later:**
+   - The **Room** page shows the predicted levels.
+   - If you move a permanent mic, the affected zones are flagged; resurvey them.
+
 Suggested workflow without a calibrator:
 1. Calibrate one mic with the best reference you have (a meter, otherwise a phone).
 2. **Copy** that calibration to every other mic. The mics then agree with each other, which is what the zone predictions depend on.
@@ -128,4 +169,5 @@ cd web && npm run typecheck
 - At 48 kHz the 20 kHz band is squeezed near Nyquist (about 12 dB adjacent-band rejection instead of 18 dB). The band is kept so 48 and 96 kHz nodes report the same band set.
 - WASAPI runs at the rate set in Windows Sound settings, and Windows "audio enhancements" must be off for the input.
 - The node page's own graphs still keep history only in the browser. Stored history is on the Hub dashboard.
+- Zone predictions are made live on the Hub. Readings a node backfills after an outage are stored for the mics, but zone history for that gap is not reconstructed.
 - Mic identity on the Hub is node + input number. Moving a mic to another input or PC creates a new entry; the old history stays under the old one.

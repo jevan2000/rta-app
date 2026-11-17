@@ -11,7 +11,11 @@ type Preset = '1h' | '6h' | '24h' | '7d' | 'service';
 
 export function HistoryPage() {
   const { live } = useApp();
-  const mics = (live?.mics ?? []).filter((m) => !m.hidden);
+  // Mics plus predicted zones (zones log like mics under "zones:<id>").
+  const mics = [
+    ...(live?.mics ?? []).filter((m) => !m.hidden).map((m) => ({ key: m.key, label: m.label, nodeName: m.nodeName })),
+    ...(live?.zones ?? []).filter((z) => z.surveyed).map((z) => ({ key: z.key, label: `${z.name} (zone)`, nodeName: 'predicted' })),
+  ];
   const [selected, setSelected] = useState<string[] | null>(null);
   const [preset, setPreset] = useState<Preset>('6h');
   const [weighting, setWeighting] = useState<'lc' | 'la'>('lc');
