@@ -5,6 +5,7 @@ using Rta.App;
 using Rta.App.Hub;
 using Rta.App.Hub.Integrations;
 using Rta.App.Hub.Reports;
+using Rta.App.Ndi;
 using Rta.App.Node;
 using Rta.App.Security;
 using Rta.Core.Calibration;
@@ -51,6 +52,8 @@ if (mode.RunsNode)
     builder.Services.AddSingleton<NodeBuffer>();
     builder.Services.AddSingleton<HubClient>();
     builder.Services.AddHostedService(sp => sp.GetRequiredService<HubClient>());
+    builder.Services.AddSingleton<NodeNdiService>();
+    builder.Services.AddHostedService(sp => sp.GetRequiredService<NodeNdiService>());
 }
 
 if (mode.RunsHub)
@@ -68,6 +71,8 @@ if (mode.RunsHub)
     builder.Services.AddHostedService(sp => sp.GetRequiredService<IntegrationService>());
     builder.Services.AddSingleton<ReportService>();
     builder.Services.AddHostedService(sp => sp.GetRequiredService<ReportService>());
+    builder.Services.AddSingleton<HubNdiService>();
+    builder.Services.AddHostedService(sp => sp.GetRequiredService<HubNdiService>());
     builder.Services.AddHostedService<HubBeaconService>();
     builder.Services.AddHostedService<ServiceScheduler>();
     builder.Services.AddHostedService<AlertEngine>();
@@ -101,6 +106,7 @@ app.UseAdminGuard();
 
 app.MapGet("/api/app", () => new { role = mode.Role, runsNode = mode.RunsNode, runsHub = mode.RunsHub, version = AppMode.Version });
 app.MapAuthEndpoints();
+app.MapNdiEndpoints(mode);
 if (mode.RunsNode) app.MapNodeEndpoints();
 if (mode.RunsHub)
 {

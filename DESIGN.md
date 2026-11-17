@@ -1,7 +1,7 @@
 # RTA App — Design
 
 Multi-mic SPL monitoring and zone prediction for a church worship space. Windows-only.
-Status: design agreed 2026-11-17. Phase 1 (Node) built 2026-11-17. Phase 2 (Hub) merged 2026-11-17. Phase 3 (survey and prediction) in PR #2. Phase 5 (integrations and reports) built 2026-11-17 on branch `phase-5`, ahead of Phase 4 at the user's request. See README.md.
+Status: design agreed 2026-11-17. Phase 1 (Node) built 2026-11-17. Phase 2 (Hub) merged 2026-11-17. Phases 1–3 and 5 are merged to `master`. Phase 4 (NDI) built 2026-11-17 on branch `phase-4`. See README.md.
 
 ## Goals
 
@@ -197,12 +197,25 @@ Status: design agreed 2026-11-17. Phase 1 (Node) built 2026-11-17. Phase 2 (Hub)
   - The automatic pass runs every 30 s and writes `<date> <time> <name> (<id>).pdf` once per ended service.
 - **CSV** is long format (one row per source per interval), uses the per-minute table for ranges over 3 h unless asked otherwise, and prefixes `'` to fields starting with `= + - @`.
 
+## Decisions made during Phase 4
+
+- **No SDK dependency.** A small P/Invoke layer (`Ndi/NdiInterop.cs`) calls `Processing.NDI.Lib.x64.dll`, found through `NDI_RUNTIME_DIR_V6`/`V5` (set by NDI Tools or the NDI Runtime) or the default install folders. Without it, NDI features show "runtime not found" and everything else keeps working.
+- **API used:** `send_create`, `send_video_v2` (BGRA, progressive, synthesized timecode), `send_audio_v2` (planar float), `send_metadata`, `send_get_no_connections`, plus `find_*` and `recv_*_v2` for the in-app check. A unit test round-trips a source through the real runtime and skips itself if NDI isn't installed.
+- **Feeds:**
+  - Node: per input, `RTA <input> audio` (raw, mono) and `RTA <input> meter` (640×360 video plus `<rta_levels/>` XML metadata), switched per input in the node config.
+  - Hub: `RTA Dashboard` (configurable 720p/1080p/4K at 1–30 fps) and optional `RTA Zone <name>` per surveyed zone.
+- **Rendering** is native SkiaSharp 3.119 into a reused BGRA bitmap, not a captured browser, in the dashboard's colours. Tiles scale from a 640×360 design.
+- **Clocking:** senders are created with clock_video/clock_audio off. Our loops pace video, and audio follows the capture callback, so NDI never blocks the metering thread.
+- **Bandwidth estimate:** video ≈ 125 Mb/s × (pixels / 1080p) × (fps / 60), an upper bound since graphics compress well; audio = channels × rate × 32 bit. Warnings appear above 40 and 100 Mb/s, or more than 8 sources from one PC.
+- **Attribution:** "NDI® is a registered trademark of Vizrt NDI AB" is shown on the NDI settings and in the code. The runtime is not redistributed.
+
 ## Open items to verify during build
 
 - ProPresenter API auth requirements (none found in the 7.9 spec) and exact token payload for message triggers — check the in-app "API Documentation" button.
 - ProPresenter 22 release notes mention a fixed Windows bug where API messages didn't show on output — test message triggering on 21.x and 22.x.
 - User reported version "21.0.3"; release notes list 21, 21.0.1, 21.1 — confirm actual installed version.
 - ASIO capture is implemented but not yet tested against the real Focusrite/Behringer hardware (WASAPI and the test signal are).
+- View the NDI feeds in a real receiver (NDI Studio Monitor, vMix, OBS, ProPresenter) and from a second PC.
 - ProPresenter integration has been tested only against a stand-in HTTP server. Test it on the real ProPresenter 21/22 machine: the stage message, the Message token format, and whether the API needs a password.
 - MIDI output is untested on a real device.
 - Zone prediction has been tested with test signals only. Validate it in the room: survey a zone, then compare the prediction against the roving mic left in place during a later service.

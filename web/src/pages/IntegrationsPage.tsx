@@ -3,6 +3,7 @@ import { api, fmtTime } from '../api';
 import { useApp } from '../App';
 import { Empty } from '../components/common';
 import { useFetch } from '../hooks';
+import { NdiSection } from '../components/NdiSection';
 
 interface NetTarget { host: string; port: number }
 interface MidiMap { source: string; metric: string; cc: number; minDb: number; maxDb: number }
@@ -104,6 +105,8 @@ export function IntegrationsPage() {
           <label className="check"><input type="checkbox" checked={f.webhooks.onService} onChange={(e) => set('webhooks', { onService: e.target.checked })} /> Service start and end</label>
         </div>
       </section>
+
+      <NdiSection />
 
       <ReportsSection f={f} set={set} />
     </>

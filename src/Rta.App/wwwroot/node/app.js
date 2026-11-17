@@ -319,6 +319,8 @@ async function openSettings() {
   $('sName').value = draftConfig.nodeName;
   $('sAuto').checked = draftConfig.autoStart;
   $('sHubMode').value = draftConfig.hubConnection ?? 'Auto';
+  $('sNdiFps').value = draftConfig.ndiMeterFps ?? 10;
+  loadNdiStatus();
   $('sHubAddr').value = draftConfig.hubAddress ?? '';
   onHubModeChange();
   for (const k of ['warnC', 'alarmC', 'warnA', 'alarmA']) $('t' + k[0].toUpperCase() + k.slice(1)).value = draftConfig.thresholds[k];
@@ -344,6 +346,17 @@ function onDeviceChange(changed = true) {
   if (changed && !sameDevice) $('sMsg').textContent = 'New device: inputs reset.';
 }
 
+async function loadNdiStatus() {
+  try {
+    const st = await (await fetch('/api/ndi/status')).json();
+    const lines = [];
+    if (!st.runtimeAvailable) lines.push(`<span class="warn">${esc(st.runtimeMessage)}</span>`);
+    else lines.push(`NDI runtime: ${esc(st.runtimeMessage)}. ${st.senders.length ? `${st.senders.length} source(s), about ${st.estimatedMbps} Mb/s: ` + st.senders.map((x) => `${esc(x.name)} (${x.connections} watching)`).join(', ') : 'No sources published.'}`);
+    for (const w of st.warnings) lines.push(`<span class="warn">${esc(w)}</span>`);
+    $('sNdiStatus').innerHTML = lines.join('<br>');
+  } catch { $('sNdiStatus').textContent = ''; }
+}
+
 function onHubModeChange() {
   const m = $('sHubMode').value;
   $('sHubAddrWrap').hidden = m !== 'Manual';
@@ -366,7 +379,9 @@ function renderInputs(inputs, device) {
       <td>${ic.channelIndex + 1}<div class="muted" style="font-size:11px">${esc(device?.channelNames?.[ic.channelIndex] ?? '')}</div></td>
       <td><input class="iName" value="${esc(ic.name)}"></td>
       <td><input class="iMic" value="${esc(ic.micLabel ?? '')}" placeholder="e.g. dbx RTA-M #1"></td>
-      <td><select class="iProf">${opts}</select></td></tr>`;
+      <td><select class="iProf">${opts}</select></td>
+      <td><input type="checkbox" class="iNdiA" ${ic.ndiAudio ? 'checked' : ''}></td>
+      <td><input type="checkbox" class="iNdiM" ${ic.ndiMeter ? 'checked' : ''}></td></tr>`;
   }).join('');
 }
 
@@ -377,6 +392,8 @@ function readInputs() {
     name: tr.querySelector('.iName').value.trim() || `Mic ${+tr.dataset.ch + 1}`,
     micLabel: tr.querySelector('.iMic').value.trim() || null,
     profileId: tr.querySelector('.iProf').value || null,
+    ndiAudio: tr.querySelector('.iNdiA').checked,
+    ndiMeter: tr.querySelector('.iNdiM').checked,
   }));
 }
 
@@ -388,6 +405,7 @@ async function saveSettings() {
     backend: d.backend, deviceId: d.id, sampleRate: +$('sRate').value,
     autoStart: $('sAuto').checked,
     hubConnection: $('sHubMode').value,
+    ndiMeterFps: Math.min(30, Math.max(1, +$('sNdiFps').value || 10)),
     hubAddress: $('sHubAddr').value.trim() || null,
     inputs: readInputs(),
     thresholds: { warnC: +$('tWarnC').value, alarmC: +$('tAlarmC').value, warnA: +$('tWarnA').value, alarmA: +$('tAlarmA').value },
