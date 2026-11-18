@@ -4,14 +4,74 @@
     {
       "name": "app",
       "runtimeExecutable": "C:/Program Files/dotnet/dotnet.exe",
-      "runtimeArgs": ["run", "--project", "src/Rta.App", "--no-launch-profile", "--", "--Mode", "Both", "--Urls", "http://0.0.0.0:5180", "--DataDir", ".devdata"],
+      "runtimeArgs": [
+        "run",
+        "--project",
+        "src/Rta.App",
+        "--no-launch-profile",
+        "--",
+        "--Mode",
+        "Both",
+        "--Urls",
+        "http://0.0.0.0:5180",
+        "--DataDir",
+        ".devdata"
+      ],
       "port": 5180
     },
     {
       "name": "node2",
       "runtimeExecutable": "C:/Program Files/dotnet/dotnet.exe",
-      "runtimeArgs": ["run", "--project", "src/Rta.App", "--no-launch-profile", "--", "--Mode", "Node", "--Urls", "http://localhost:5190", "--DataDir", ".devdata-node2"],
+      "runtimeArgs": [
+        "run",
+        "--project",
+        "src/Rta.App",
+        "--no-launch-profile",
+        "--",
+        "--Mode",
+        "Node",
+        "--Urls",
+        "http://localhost:5190",
+        "--DataDir",
+        ".devdata-node2"
+      ],
       "port": 5190
+    },
+    {
+      "name": "demo",
+      "runtimeExecutable": "C:/Program Files/dotnet/dotnet.exe",
+      "runtimeArgs": [
+        "run",
+        "--project",
+        "src/Rta.App",
+        "--no-launch-profile",
+        "--",
+        "--Mode",
+        "Both",
+        "--Urls",
+        "http://0.0.0.0:5200",
+        "--DataDir",
+        ".devdata-demo"
+      ],
+      "port": 5200
+    },
+    {
+      "name": "demo-node",
+      "runtimeExecutable": "C:/Program Files/dotnet/dotnet.exe",
+      "runtimeArgs": [
+        "run",
+        "--project",
+        "src/Rta.App",
+        "--no-launch-profile",
+        "--",
+        "--Mode",
+        "Node",
+        "--Urls",
+        "http://localhost:5201",
+        "--DataDir",
+        ".devdata-demo-node"
+      ],
+      "port": 5201
     }
   ]
 }
