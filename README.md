@@ -1,252 +1,414 @@
-# RTA App
+# RTA Sound Monitor
 
-Multi-mic SPL monitoring (A/C-weighted) for a worship space. See [DESIGN.md](DESIGN.md) for the full design and build phases.
+**Live sound-level monitoring for worship spaces.** Measure A- and C-weighted levels from several RTA mics at once, see them on any device, predict what every section of the room is hearing, and keep a record of every service.
 
-## Status: all six phases built (v1.0.0)
+![Live dashboard](docs/images/live.png)
 
-**Phase 1: Node**
-- Audio capture:
-  - **ASIO** (Focusrite, Behringer, …), with **WASAPI** as a fallback.
-  - A **virtual 4-channel test-signal device** for trying the app without hardware.
-  - Sample rates 44.1, 48, 88.2 and 96 kHz.
-- Metering per input:
-  - LA, LC and LZ, Fast and Slow.
-  - LAeq and LCeq over 1 min, 15 min and the session.
-  - LCpeak, C−A, and a 1/3-octave RTA.
-  - Clip detection.
-- A and C weighting meet the IEC 61672-1 Class 1 tolerances at 48 and 96 kHz (unit-tested).
-- Calibration profiles, made by any of several methods (see below), each rated for accuracy.
+- **Measure:** calibrated dBC and dBA (Slow, Fast, 1-min, 15-min and whole-service Leq, peak), plus a 1/3-octave RTA for every mic.
+- **Many mics, many PCs:** any PC with an audio interface becomes a *node*. One PC is the *Hub* that collects everything; nodes find it automatically.
+- **Predict every seat:** survey each seating zone once with a roving mic. After that, the permanent mics predict each zone's level live, band by band.
+- **Know when it's too loud:** warn and alarm levels per mic or zone, with an alert banner, a ProPresenter stage-display message, OSC, MIDI or webhooks.
+- **Keep a record:** services start automatically from a weekly schedule, and a PDF report is saved after each one. Every second is logged and can be exported to CSV.
+- **Share it:** a dashboard in any browser, NDI video and audio feeds for vMix, OBS and ProPresenter, and an open read-only API.
 
-**Phase 2: Hub**
-- **Modes:**
-  - **Both** (default): one PC does capture and the Hub.
-  - **Node**: a capture-only PC.
-  - **Hub**: dashboard and logging only.
-- **Discovery:**
-  - Nodes find the Hub automatically via a UDP broadcast on port 5181.
-  - Alternatively, a fixed Hub address can be entered on the node.
-- **Node approval:** new nodes show as *Pending* until an admin accepts them on the Hub. The node on the Hub's own PC is accepted automatically.
-- **Store and forward:**
-  - Each node logs per-second and per-minute records to a local buffer (7 days).
-  - Anything the Hub hasn't acknowledged is resent after a reconnect, so a Hub restart loses no data.
-- **Hub database** (SQLite):
-  - Per-second LAeq, LCeq and LZeq, peak and Slow max, kept for 1 year (configurable).
-  - Per-minute summaries with 1/3-octave bands, kept forever.
-- **Services:**
-  - A weekly schedule (Hub local time) plus manual start and stop.
-  - Live service Leq per mic.
-  - A per-service summary: Leq, maximum 1-min Leq, peak, time above the warn and alarm levels, and alerts.
-- **Alerts:**
-  - Rules per mic (or all mics) on any measure: Slow, 1/15-min Leq, service Leq, or peak.
-  - Warn and alarm levels, a minimum hold time and hysteresis.
-  - A live banner, plus an event log.
-- **Dashboard** (React + TypeScript, at `/` on the Hub):
-  - Live cards grouped by node.
-  - Mic detail: level vs time, Leq tiles, RTA with peak hold, C−A trend, plus optional spectrogram and histogram.
-  - History for several mics at once, by time range or by service.
-  - Pages for services, alerts, nodes and settings.
-- **Admin password:**
-  - Viewing is open to anyone on the network. Every change needs the password (PBKDF2 hash with a sign-in cookie).
-  - Until a password is set, changes are allowed only from the Hub PC itself.
-- The node page (audio, inputs, calibration) has moved to `/node/`. It shows the Hub connection status and has Hub settings.
+---
 
-**Phase 3: survey and zone prediction**
-- **Plan editor** (dashboard → **Plan**):
-  - Draw the room in metres on a grid: outline, stage, seating blocks, aisles, walls and text.
-  - Draw **zones** as rectangles or polygons.
-  - Optionally trace over a PNG/JPEG/WebP photo or plan. Multiple floors are supported.
-  - Place each mic as **Permanent** (used for predictions) or **Roving** (the survey mic).
-- **Survey** (dashboard → **Survey**):
-  1. Pick a zone and the roving mic, and press Start.
-  2. Every permanent mic is recorded over exactly the same time, as gap-free 1/3-octave data.
-  3. A confidence bar fills with time and steadiness (minimum 60 s by default).
-  4. Save it, or discard it.
-  - A **handheld meter reading** can be entered instead. It's single-number, so lower confidence.
-- **Model:**
-  - Each zone gets a per-band offset from each permanent mic.
-  - Mics are weighted by how steadily they tracked the zone, and a broadband correction keeps the A/C totals exact.
-  - Predictions follow changes in the mix (for example more bass) band by band, which a single dB offset can't.
-  - Resurveys replace the old data by default, or average with it (set per zone).
-- **Room view** (dashboard → **Room**):
-  - The blueprint with each zone shaded by its predicted level: now (1 s), 1 min, 15 min or service, in dBC or dBA.
-  - Live mic readings shown on the plan.
-  - Click a zone for the same graphs as a mic.
-- **Zones log like mics** (per second and per minute, under `zones:<id>`). They appear in History, service summaries and **alert rules** (per zone or "every zone").
-- **Stale data:**
-  - If a permanent mic is moved on the plan, removed or offline, the zone is flagged and keeps predicting at lower confidence.
-  - Recalibrating a permanent mic after a survey is **compensated automatically**.
+## Contents
 
-**Phase 5: integrations and reports** (dashboard → **Integrations**; built before Phase 4)
-- **ProPresenter** (7.9+, including 21 and 22, via its network API):
-  - Alarms (and optionally warnings) appear as a **stage-display message**, for example "LEVEL ALARM: Balcony 104 dBC (limit 103)", and clear when the level drops.
-  - An optional live level line on the stage display.
-  - An opt-in **Message** readout with a text token, for the audience output. It's off by default.
-  - A **Test** button checks the connection and shows a test stage message for 4 s.
-- **OSC** to any number of targets:
-  - Levels at `/rta/mic/<name>/<measure>` and `/rta/zone/<name>/<measure>`.
-  - Alert state at `…/alert`, as 0, 1 or 2.
-  - `/rta/alert` the moment an alert changes, and `/rta/service/active`.
-- **MIDI out:**
-  - A CC per chosen level, scaled over a dB range to 0–127.
-  - A note held while any warning or alarm is active.
-- **Webhooks:** JSON POSTs on alert start, escalate and clear and on service start and end (Teams/Slack workflows, Home Assistant, Zapier…), with retries.
-- **Read-only HTTP and WebSocket API** (no sign-in):
-  - `/api/v1/levels` (JSON).
-  - `/api/v1/levels/<name>/<measure>`: the plain number as text, for vMix/OBS text sources or Companion.
-  - `/ws/v1/levels?hz=2`: the same JSON, streamed.
-- **PDF service reports:**
-  - Written automatically about 90 s after each service ends, to a folder you choose (a synced or shared folder works well).
-  - Also open from any service's page.
-  - Contents: Leq per mic and zone, maximum 1-min LCeq, peak, time above the warn and alarm levels, a level chart, alerts, and calibration notes.
-- **CSV export:** per second (or per minute for long ranges) for any mics and zones from History, or everything for a service. Spreadsheet formulas in names are neutralised.
+1. [How it fits together](#how-it-fits-together)
+2. [What you need](#what-you-need)
+3. [Installing](#installing)
+4. [First-time setup](#first-time-setup)
+5. [Calibrating mics](#calibrating-mics)
+6. [Zones and surveys](#zones-and-surveys)
+7. [Services, history and reports](#services-history-and-reports)
+8. [Alerts](#alerts)
+9. [Integrations](#integrations)
+10. [Best practices](#best-practices)
+11. [Troubleshooting](#troubleshooting)
+12. [Data, backups and security](#data-backups-and-security)
+13. [Known limitations](#known-limitations)
+14. [For developers](#for-developers)
 
-**Phase 4: NDI outputs** (needs NDI Tools or the NDI Runtime from ndi.video on each PC that publishes; the app finds it automatically)
-- **Per input, on each node** (node page → Settings → Inputs):
-  - **NDI audio**: the raw mic audio, unweighted, 1 channel at the node's sample rate.
-  - **NDI meter**: a 640×360 meter video (dBC/dBA, Leq 1 min/15 min/session, bar with warn/alarm marks, mini RTA). The levels are also sent as NDI metadata `<rta_levels … lcs="84.5" lceq1m="84.1" …/>`.
-- **From the Hub** (dashboard → Integrations → NDI video):
-  - **RTA Dashboard**: every mic (and optionally every zone) on one 720p/1080p/4K frame, with alert banner, service and clock.
-  - Optional **RTA Zone &lt;name&gt;** feed per zone.
-- **Names:** sources appear as `<PC name> (RTA Mic 1 meter)` and so on. Use them as inputs in vMix, OBS, ProPresenter (live video input) or a confidence monitor.
-- **Bandwidth:** each source shows an estimate, and the app warns above about 40 Mb/s and 100 Mb/s, or more than 8 sources from one PC.
-- **Checking feeds:** **Find sources / Check** on the Integrations page lists NDI sources on the network and confirms frames arrive (size, audio format, metadata).
+---
 
-**Phase 6: installer and running unattended**
-- **`RtaSetup-1.0.0.exe`:** one self-contained installer (no .NET needed on the target PC). It asks:
-  - **What this PC does:** mics and Hub, mics only, or Hub only.
-  - **How it starts:** at sign-in with a status icon, or as a Windows service at boot.
-  - Whether to add a **Windows Firewall rule** (private and domain networks only), and whether to show the status icon at sign-in.
-- **As a service:**
-  - Runs as the low-privilege *LocalService* account with delayed auto-start, and restarts automatically if it crashes.
-  - Suits Hub-only PCs. Many ASIO drivers need a signed-in user, so PCs with audio interfaces should start at sign-in. Set Windows to sign in automatically on an unattended booth PC.
-- **Status icon** (RtaTray, in the notification area):
-  - The colour shows status: green OK, amber warning, red alarm or error.
-  - It pops up a notification when an alarm starts.
-  - The menu opens the dashboard, node page and logs.
-  - In sign-in mode it also starts the app hidden and restarts it if it stops.
-- **Logs:** daily files in `C:\ProgramData\RtaApp\logs` (14 days kept).
-- **Upgrades:** run the new setup over the old one. It stops the app cleanly, keeps settings and data, and remembers the role and start mode.
-- **Uninstall:** removes the program, service, firewall rule and shortcuts, and keeps `C:\ProgramData\RtaApp` (settings, calibration, logged data) unless you delete it.
+## How it fits together
 
+```mermaid
+flowchart LR
+  subgraph FOH["FOH PC (Mics + Hub)"]
+    M1[FOH mic] --> I1[Audio interface] --> N1[Node]
+    M2[Rear-wall mic] --> I1
+    N1 --> H[(Hub<br/>database, zones,<br/>alerts, reports)]
+  end
+  subgraph LAPTOP["Survey laptop (Node)"]
+    M3[Roving mic] --> I2[Interface] --> N2[Node]
+  end
+  N2 -- "levels over the network<br/>(found automatically)" --> H
+  H --> D[Dashboard in any browser<br/>phones, tablets, FOH]
+  H --> P[ProPresenter<br/>stage display]
+  H --> O[OSC · MIDI · webhooks<br/>HTTP API]
+  H --> V[NDI video feeds]
+  N1 --> A[NDI audio and meter feeds]
+```
 
-## Install (church PCs)
+- A **node** captures audio from its interface, measures it, calibrates it, and sends the levels on. It keeps 7 days of readings, so nothing is lost if the Hub is offline for a while.
+- The **Hub** stores every second, predicts the zones, runs the service schedule and alerts, writes reports, and serves the dashboard on port 5180.
+- One PC can be both. That's the usual setup for a single FOH PC.
 
-Run `RtaSetup-1.0.0.exe` on each PC and answer the two questions:
+---
 
-| PC | What it does | How it starts |
+## What you need
+
+| | |
+|---|---|
+| **PCs** | Windows 10 or 11, 64-bit. Any reasonably recent PC works. The Hub can be a modest office PC; nodes need a free USB/Thunderbolt port for the interface. |
+| **Audio interface** | Anything with an **ASIO** driver and 48 V phantom power (Focusrite, Behringer, MOTU, …). WASAPI works as a fallback. |
+| **Measurement mics** | Omni RTA/measurement mics such as the dbx RTA-M or Behringer ECM8000 (both need phantom power). Two or more permanent mics, plus one for surveying. |
+| **Calibration** (recommended) | A 94 dB / 1 kHz acoustic calibrator. Or an SPL meter, or a phone app for a start. See [Calibrating mics](#calibrating-mics). |
+| **Network** | Wired Ethernet on the same network/VLAN. Gigabit if you use NDI. |
+| **Optional** | [NDI Tools](https://ndi.video) on PCs that publish or view NDI feeds. ProPresenter 7.9 or later for stage messages. |
+
+---
+
+## Installing
+
+Run **`RtaSetup-1.0.0.exe`** on each PC (ask whoever maintains the repo for the latest build, or [build it yourself](#for-developers)). It's a single installer with nothing else to download. Setup asks two questions:
+
+**1. What does this PC do?**
+
+| Choice | Use it for |
+|---|---|
+| **Mics and the Hub on this PC** | A single-PC setup, or the main FOH PC. |
+| **Mics only** | A booth PC or laptop that sends readings to a Hub elsewhere. |
+| **Hub only** | An office or server PC with no mics that runs the dashboard and logging. |
+
+**2. How should RTA start?**
+
+| Choice | Use it for |
+|---|---|
+| **When someone signs in** (with a status icon) | **PCs with audio interfaces.** Audio drivers (ASIO) usually need a signed-in user. For an unattended booth PC, set Windows to sign in automatically (see [Best practices](#unattended-pcs)). |
+| **As a Windows service at boot** | **Hub-only PCs.** It runs with nobody signed in, and restarts itself if it ever crashes. |
+
+Leave **"Allow RTA through Windows Firewall"** ticked. The Hub, the other nodes and NDI need it, and the rule only applies on private and domain networks.
+
+When setup finishes:
+
+- Open **http://localhost:5180** on the Hub, or **http://&lt;hub-ip&gt;:5180** from any phone, tablet or PC on the network.
+- The first time you change anything, you're asked to **choose an admin password**. Viewing stays open to everyone on the network; changes need the password.
+- The **status icon** in the notification area turns green, amber or red with the system's state, shows a pop-up when an alarm starts, and its menu opens the dashboard, node page and logs.
+
+> **Upgrading:** run the new setup over the old one. It stops RTA cleanly, keeps all settings, calibration and history, and remembers your earlier choices.
+> **Uninstalling** removes the program, service, firewall rule and shortcuts. Your data in `C:\ProgramData\RtaApp` is kept until you delete it.
+
+<details>
+<summary>Scripted / silent install</summary>
+
+```bat
+RtaSetup-1.0.0.exe /VERYSILENT /ROLE=Both /RUNAS=signin /TASKS="firewall,startup"
+RtaSetup-1.0.0.exe /VERYSILENT /ROLE=Hub  /RUNAS=service /TASKS="firewall"
+```
+`/ROLE` is `Both`, `Node` or `Hub`; `/RUNAS` is `signin` or `service`. The choices are saved in `C:\ProgramData\RtaApp\app.json`.
+</details>
+
+---
+
+## First-time setup
+
+### 1. Choose the audio interface on each node
+
+On each PC with mics, open **http://localhost:5180/node/** (or **Node ↗** in the dashboard, or the status icon's menu) and click **Settings**:
+
+- **Audio device:** pick the interface's **ASIO** driver. Leave 48 kHz unless you have a reason to change it.
+- **Inputs:** tick the inputs with mics, give each a name (e.g. *FOH mic*), and type which physical mic is plugged in (e.g. *dbx RTA-M #1*).
+- **Hub:** leave it on *Automatically*. On a separate network segment, enter the Hub's address instead.
+
+![Node page](docs/images/node-page.png)
+
+### 2. Accept new nodes on the Hub
+
+A new node shows up on the Hub's **Nodes** page as *Pending* and sends nothing until you press **Accept**. Once accepted, it sends everything it has logged in the meantime. The node on the Hub's own PC is accepted automatically. You can rename mics or hide unused inputs here too.
+
+![Nodes page](docs/images/nodes.png)
+
+### 3. Calibrate every mic
+
+See [Calibrating mics](#calibrating-mics). Until a mic is calibrated, its readings are relative dBFS values (marked **UNCAL**), not dB SPL.
+
+### 4. Draw the room, then survey the zones
+
+See [Zones and surveys](#zones-and-surveys).
+
+### 5. Set the service schedule and alert levels
+
+On **Services**, add your weekly services (e.g. *Sunday 9:00, 75 min*). On **Alerts**, set warn and alarm levels with your leadership. See [Best practices → targets](#choosing-targets).
+
+### 6. Hook up ProPresenter and anything else
+
+See [Integrations](#integrations).
+
+---
+
+## Calibrating mics
+
+An audio interface only knows "how close to full scale". Calibration turns that into real **dB SPL**. In the node page, click **Calibration**, pick the input and a method:
+
+![Calibration dialog](docs/images/calibration.png)
+
+| Method | Accuracy | How |
 |---|---|---|
-| Single PC with the audio interface | Mics and Hub | At sign-in |
-| Booth PC with an interface, Hub elsewhere | Mics only | At sign-in (with Windows auto sign-in if unattended) |
-| Office/server PC, no mics | Hub only | Windows service |
+| **Acoustic calibrator** | Reference grade (±0.4–0.8 dB) | Fit the calibrator snugly over the capsule, switch it on, press **Measure**. 94, 104 or 114 dB at 1 kHz (or a 250 Hz pistonphone). |
+| **Match an SPL meter** | Good (±1–1.5 dB) with a Class 1/2 meter; unreliable (±3 dB) with a consumer meter | Put the meter right next to the mic, play steady pink noise at about 85 dB, set the meter to the same weighting and to Slow/Leq, type its reading, press **Measure**. |
+| **Copy from another mic** | The source's accuracy + about 0.5 dB | Hold this mic right next to an already-calibrated one, play pink noise, press **Measure**. |
+| **Phone meter app** | **Unreliable** (≈ ±3 dB on iPhone, worse on Android) | Like meter match, with the phone as the reference. Flagged everywhere as unreliable. |
+| **Estimate from specs** | **Very rough** (±6 dB or worse) | From the mic's sensitivity and the interface's specs, with no measurement. A stopgap only. |
 
-Then open http://localhost:5180 on the Hub (or `http://<hub IP>:5180` from any device on the network). The first time you change a setting, you're asked to choose an admin password.
+Each profile shows its accuracy (*Reference grade*, *Good*, *Unreliable*, *Very rough*), and the dashboard shows the badge on every reading. Profiles can be exported and imported between PCs.
 
-Scripted install: `RtaSetup-1.0.0.exe /VERYSILENT /ROLE=Both|Node|Hub /RUNAS=signin|service /TASKS="firewall,startup"`.
+**No calibrator yet?** Calibrate one mic with the best reference you have, then use **Copy from another mic** for the rest. All the mics will then agree with each other, which is what zone prediction depends on. When a calibrator arrives, recalibrate that one mic and copy again.
 
-Settings chosen in setup are stored in `C:\ProgramData\RtaApp\app.json` (`Mode`, `RunAs`, `Urls`). Command-line options still override them.
+---
 
-## Build
+## Zones and surveys
 
-Requires the .NET 10 SDK, Node.js 20+ (dashboard), and Inno Setup 6 (`winget install JRSoftware.InnoSetup`) for the installer.
+The permanent mics can't be in every seat, so RTA learns how each section of the room relates to them.
+
+### 1. Draw the plan
+
+On **Plan**, draw the room in metres:
+- The room outline, stage, seating blocks, aisles and walls.
+- Your **zones**, as rectangles or freehand shapes.
+- A photo or exported floor plan as a background to trace over, if you have one.
+- A second floor (e.g. a balcony), if needed.
+
+Then use **Place mic** to put each **permanent** mic where it really is, and mark the survey mic as **Roving**.
+
+![Plan editor](docs/images/plan-editor.png)
+
+### 2. Survey each zone
+
+Take the roving mic (usually a laptop running as a node) to a typical seat in the zone. On **Survey**, pick the zone and press **Start**. Leave it running for at least a minute during a service or with pink noise. The confidence bar fills as the readings settle. Then press **Stop & save**.
+
+![Survey page](docs/images/survey.png)
+
+RTA records the roving mic and every permanent mic over exactly the same time. It learns the difference for each frequency band, so its predictions keep up when the mix changes (say, more bass in a worship set). A single dB offset couldn't do that.
+
+### 3. Watch the room
+
+**Room** shows the plan with each zone coloured by its predicted level (blue → green → amber at warn → red at alarm), live mic readings, and a confidence figure for each zone. Click a zone for the same graphs as a mic: level over time, Leq, RTA, C − A, spectrogram and histogram.
+
+![Room view](docs/images/room.png)
+
+Zones are logged like mics, so they appear in History, service reports and alerts. If a permanent mic is moved on the plan or taken away, its zones are flagged *resurvey*. Recalibrating a permanent mic is corrected for automatically.
+
+---
+
+## Services, history and reports
+
+- **Services** start and end from the weekly schedule, or by hand from the Live page. Logging runs all the time; a service just labels a stretch of time.
+- **Mic detail:** click any mic or zone for level over time with warn and alarm lines, Leq tiles, the RTA with peak hold, the C − A trend, and optional spectrogram and histogram.
+
+![Mic detail](docs/images/mic-detail.png)
+
+- **History** graphs any mics and zones over the last hour, day or week, or over a chosen service, and exports CSV.
+
+![History](docs/images/history.png)
+
+- **Service summary:** every service gets a page with the Leq for each mic and zone, the highest 1-minute Leq, peaks, time spent above the warn and alarm levels, and alerts.
+
+![Service summary](docs/images/service.png)
+
+- **PDF reports** are saved automatically about 90 seconds after each service ends, to a folder you choose (on **Integrations → Service reports**; a OneDrive or network folder works well). You can also open them from any service's page.
+
+<p align="center"><img src="docs/images/report.png" alt="Service report" width="640"></p>
+
+---
+
+## Alerts
+
+On **Alerts**, each rule watches one mic, every mic, one zone or every zone, using a measure such as dBC Slow, 1-min Leq, 15-min Leq, service Leq or peak. A rule has:
+- a **warn** level and an **alarm** level
+- a **hold time**: the level must stay over the limit this long before the alert starts
+- **hysteresis**: the level must drop this far below the limit before the alert clears
+
+Active alerts show as a banner on every page, colour the cards, go to ProPresenter, OSC, MIDI and webhooks, and are logged in the service reports.
+
+![Alerts](docs/images/alerts.png)
+
+---
+
+## Integrations
+
+Everything is set on the dashboard's **Integrations** page. Every section has a **Test** button and a live status.
+
+![Integrations](docs/images/integrations.png)
+
+| Integration | What it does |
+|---|---|
+| **ProPresenter** (7.9+, incl. 21 & 22) | Shows *"LEVEL ALARM: Balcony 104 dBC (limit 103)"* as a **stage-display message**, cleared automatically. Optionally shows a live level line on the stage display. An opt-in *Message* readout (it can appear on the audience screen) is off by default. In ProPresenter, turn on *Settings → Network → Enable Network*. |
+| **OSC** | `/rta/mic/<name>/lceq1m` (and `lcs`, `laeq1m`, `lceq15m`, `lceqservice`, `cminusa`…) as floats, `…/alert` as 0/1/2, and an `/rta/alert` message the moment an alert changes. For Bitfocus Companion, QLab and consoles. |
+| **HTTP / WebSocket** (read-only, no password) | `/api/v1/levels` (JSON), `/api/v1/levels/<name>/lceq1m` (just the number, e.g. `84.2`, handy for a vMix or OBS text source), and `ws://<hub>:5180/ws/v1/levels`. |
+| **Webhooks** | JSON POSTs on alert start, escalate and clear and on service start and end, for Teams/Slack workflows, Home Assistant, Zapier and similar. |
+| **MIDI** | A control change per chosen level (scaled to 0–127), and notes held while a warning or alarm is active. Use a hardware port or loopMIDI. |
+| **NDI** | Per input on each node: raw **audio** and a **meter** video with levels attached as data. From the Hub: an **RTA Dashboard** frame (720p/1080p/4K) and a feed per zone. Needs [NDI Tools](https://ndi.video). Bandwidth is estimated, with warnings. |
+
+<p align="center"><img src="docs/images/ndi-dashboard.png" alt="NDI dashboard feed" width="720"><br><em>The “RTA Dashboard” NDI feed, as it appears in vMix, OBS or ProPresenter.</em></p>
+
+---
+
+## Best practices
+
+### Mic placement
+- **Permanent mics** should "hear" the PA the way the congregation does: at or slightly above ear height, with a clear line to the main speakers. Mount them on a wall bracket, balcony rail or ceiling drop. Keep them about 1 m or more from walls and corners (which add bass), and away from subwoofers, HVAC vents and people's conversations.
+- **Put one mic at the mix position.** It's the level the engineer is listening to, and it's a good anchor for the zone models.
+- **Two to four permanent mics** spread around the room give better predictions than one. Once installed, **don't move them**: their zones will need a resurvey.
+- **Point measurement mics toward the stage.** They're omnidirectional, but the high end is most accurate head-on.
+
+### Gain and calibration
+- **Set the preamp gain once, then leave it.** Calibration is only valid at that gain. Note the setting in the calibration profile, and tape the knob or lock it in the interface's software.
+- **Leave headroom.** After calibrating, the profile's *offset* is roughly the loudest peak the input can measure before clipping. Aim for **125 dB or more** so a kick drum can't clip. The node warns if an input clips.
+- **Turn off Windows "audio enhancements"** for the interface, and use the **ASIO** driver.
+- **Check calibration** every month or so, and before big events. It only takes 30 seconds with a calibrator. Recheck after anyone touches the gain, swaps a mic or changes the interface.
+
+### Surveying
+- Survey **during a real service or rehearsal**, or with pink noise at a typical worship level. Quiet-room surveys predict poorly.
+- Sit in a **typical seat**, roving mic at **seated ear height** (about 1.1–1.2 m), away from walls and people talking.
+- Let it run **at least 60 seconds**, longer during varied music. Wait for a high confidence figure.
+- For big zones, survey two or three seats and set the zone to **Average all surveys** (Plan → select the zone).
+- **Resurvey** after moving a permanent mic, changing the PA, its tuning or processing, or making big changes to the room (risers, curtains, seating).
+
+<a id="choosing-targets"></a>
+### Choosing targets
+Set targets with your pastors and worship leaders, and watch both weightings:
+- **dBA** follows how loud people perceive the music and relates to hearing risk.
+- **dBC** includes the low end that people *feel*.
+- A large **C − A** (more than about 10–15 dB) means the mix is bass-heavy.
+
+For hearing-risk context, the NIOSH guideline is **85 dBA averaged over 8 hours**, halving the safe time for every 3 dB louder (91 dBA ≈ 2 hours, 94 dBA ≈ 1 hour). Many churches set a 15-minute or service LAeq target somewhere in the high 80s to mid 90s dBA, with a dBC ceiling for the low end. The defaults here (warn 98 / alarm 103 dBC, 1-minute Leq) are only a starting point.
+
+### Network
+- Wire every RTA PC to the same network and VLAN. Discovery uses a broadcast, which doesn't cross routers (use *Settings → Hub → At a fixed address* if it must).
+- Give the Hub a fixed IP (a DHCP reservation) so bookmarks and integrations keep working.
+- Use gigabit for NDI, and keep video feeds at 5–10 fps; levels don't change faster than that.
+
+<a id="unattended-pcs"></a>
+### Unattended PCs
+- PCs with interfaces: install with **start at sign-in** and enable **automatic sign-in** (Microsoft's *Autologon* tool, or `netplwiz`). Use a dedicated local account.
+- Set the power plan to **never sleep**, and set Windows Update **active hours** to cover service times.
+- In the BIOS, set **power on after power loss**, if available.
+- Hub-only PCs can run **as a service** and need none of this.
+
+---
+
+## Troubleshooting
+
+| Symptom | Try |
+|---|---|
+| A node says *"Looking for a Hub…"* | Is the Hub running? Is the firewall rule installed (rerun setup with it ticked)? Is the node on the same subnet? If not, set the Hub address on the node page. |
+| A node is *"waiting for approval"* | Accept it on the Hub's **Nodes** page. |
+| The audio device won't start | Close other programs using the ASIO driver (DAWs, Smaart). Check the interface's software isn't locking the sample rate. Restart RTA from the status icon. |
+| Levels look wrong | Has someone changed the gain since calibrating? Is the right profile assigned to the input (node page → Settings)? Are Windows enhancements off? |
+| Clipping warning | Turn the preamp gain down, then **recalibrate**. |
+| A zone says *resurvey* | A permanent mic was moved or removed on the plan. Survey the zone again. |
+| ProPresenter *"can't reach"* | In ProPresenter: *Settings → Network → Enable Network*. Check the IP and port, and the firewall on the ProPresenter PC. Press **Test**. |
+| No NDI sources | Install NDI Tools. Check the firewall rule, and that both PCs are on the same subnet. On the Integrations page, **Find sources** shows what's visible. |
+| Forgot the admin password | On the Hub PC: quit RTA (status icon → Exit, or stop the *RtaApp* service), delete `C:\ProgramData\RtaApp\admin.json`, start RTA again and set a new password from that PC. |
+
+**Logs** are in `C:\ProgramData\RtaApp\logs` (status icon → *Open log folder*), one file per day, kept 14 days.
+
+**Ports:**
+
+| Port | Use |
+|---|---|
+| TCP 5180 | Dashboard, API, node connections |
+| UDP 5181 | Hub discovery |
+| NDI's own ports | mDNS 5353, TCP 5960 and up |
+
+---
+
+## Data, backups and security
+
+- **Where data lives:** `C:\ProgramData\RtaApp`, containing:
+  - settings (`node.json`, `hub.json`, `app.json`)
+  - calibration profiles (`calibration\`)
+  - the plan (`plan.json`, `plan-images\`)
+  - the Hub database (`hub.db`)
+  - the node's 7-day buffer
+  - reports and logs
+- **Retention:** per-second data is kept for 1 year by default (Settings); 1-minute summaries are kept forever. Expect about 1 GB per mic per year.
+- **Backups:** stop RTA, then copy the whole folder. Also export each calibration profile (node page → Calibration → Export); it's handy when setting up a replacement PC.
+- **Security:**
+  - Set the **admin password** straight away.
+  - Viewing is open to the local network by design; every change needs the password, and the first password can only be set on the PC itself.
+  - Keep RTA on your private church network. **Don't port-forward it to the internet.**
+  - In sign-in mode, anyone who can sign in to that PC can change files in the data folder, so limit booth PCs to trusted accounts.
+
+---
+
+## Known limitations
+
+- **Field testing:** v1.0.0 has been tested with built-in test signals, WASAPI capture and the NDI 6 runtime on one PC. The following haven't been tried on real hardware yet:
+  - ASIO interfaces, especially under automatic sign-in
+  - multi-PC discovery across a real network
+  - a real ProPresenter 21/22, including whether its API wants a password and its exact Message token format
+  - MIDI devices
+  - NDI viewers such as vMix, OBS or Studio Monitor
+
+  Please report anything odd.
+- **Zone predictions** are made live on the Hub. If a node was offline and later sends its backlog, the mic history is filled in, but the zone history for that gap isn't.
+- **Mic identity** is *PC + input number*. Moving a mic to another input or PC starts a new history entry, so rename it on the Nodes page to keep things tidy.
+- **Mic response files** (REW/.frd) correct the RTA bands only, not the broadband dBA/dBC.
+- **Windows enhancements:** with WASAPI (non-ASIO) capture, Windows "audio enhancements" must be off and the sample rate is whatever Windows Sound settings say.
+
+---
+
+## For developers
+
+Requires the **.NET 10 SDK**, **Node.js 20+**, and, for the installer, **Inno Setup 6** (`winget install JRSoftware.InnoSetup`).
 
 ```bash
-powershell -ExecutionPolicy Bypass -File installer/build-installer.ps1
+dotnet run --project src/Rta.App --no-launch-profile -- --DataDir .devdata
 ```
+Then open http://localhost:5180; the app starts on a built-in **test signal**, so no hardware is needed. Useful options:
+- `--Mode Both|Node|Hub`
+- `--Urls http://0.0.0.0:5180`
+- `--DataDir <folder>`
 
-This builds the dashboard, publishes RtaApp and RtaTray self-contained for win-x64 into `artifacts/app`, and writes `artifacts/RtaSetup-<version>.exe`. The version comes from `Directory.Build.props`.
-
-## Run from source (development)
-
-```bash
-cd web && npm ci && npm run build && cd ..
-```
-
-```bash
-dotnet run --project src/Rta.App --no-launch-profile
-```
-
-Then open http://localhost:5180 for the dashboard, or http://localhost:5180/node/ for this PC's node. The node starts on the test signal; pick your interface in the node's **Settings**. The first time you change something, the app asks you to set an admin password.
-
-Options (command line, `appsettings.json`, or `app.json` in the data folder):
-
-- `--Mode Both|Node|Hub` (default `Both`).
-- `--Urls`: the listen address. The default is `http://0.0.0.0:5180` for a Hub (reachable on the LAN) and `http://localhost:5180` for a node-only PC.
-- `--DataDir <folder>`: where config, calibration, buffers, logs and the Hub database live (default `C:\ProgramData\RtaApp`). The `.claude/launch.json` dev configs use `.devdata`.
-
-### Adding another PC as a node
-
-1. On the second PC, install with "Mics only" (or run from source with `--Mode Node`).
-2. Open http://localhost:5180/node/ there, pick the interface, and calibrate.
-3. It finds the Hub automatically. On the Hub, open **Nodes** and press **Accept**. Everything it has logged in the meantime is sent.
-4. If it can't find the Hub (different subnet or VLAN), set **Settings → Hub → At a fixed address** on the node.
-5. On the Hub PC, Windows Firewall must allow TCP 5180 and UDP 5181. Windows usually asks the first time the app runs.
-
-### Dashboard development
-
-`npm run dev` in `web/` serves the dashboard at http://localhost:5173 with hot reload, proxying the API to a running app on port 5180.
-
-## Calibrating a mic
-
-Set the preamp gain where it will stay, enable the input in **Settings**, and type which mic is plugged in. Then open **Calibration**, pick the input and a method:
-
-| Method | Accuracy (typical) | How |
-|---|---|---|
-| **Acoustic calibrator** | Reference grade, ±0.4–0.8 dB | Fit the 94/104/114 dB calibrator (1 kHz, or 250 Hz pistonphone), press Measure. |
-| **Match an SPL meter** | Good, ±1–1.5 dB (Class 1/2). Unreliable, ±3 dB (consumer/unrated) | Meter next to the mic, steady pink noise, same weighting, type the meter's reading. |
-| **Copy from another calibrated mic** | Source ± 0.5 dB | Put this mic next to a calibrated one, play pink noise, press Measure. It inherits the source's rating, so a copy of an unreliable profile is unreliable too. |
-| **Phone meter app** | **Unreliable**: about ±3 dB on iPhone (e.g. NIOSH SLM), ±6 dB or worse on Android | Same as meter match, with the phone as the reference. |
-| **Estimate from specs** | **Very rough**: ±6 dB or worse | Mic sensitivity (mV/Pa), interface max input at minimum gain (dBu), and gain added (dB). No measurement. |
-| **Manual** | Unknown | Type an offset. |
-
-Profiles rated Unreliable or Very rough show a dashed amber **≈** badge on the node page and the dashboard, with a warning line. Editing a profile's offset by hand resets its rating to Unknown.
-
-### Setting up zone prediction
-
-1. **Plan:**
-   - Draw the room and the listening zones (for example "Front center", "Under balcony", "Balcony left").
-   - Place the permanent mics where they really are.
-   - Place the roving mic anywhere, marked *Roving*.
-   - Save.
-2. **Calibrate** the roving mic. Copying from a permanent mic side by side is fine. Uncalibrated permanent mics still work, but a calibrated rover is what makes zone levels real dB SPL.
-3. **Survey:**
-   1. Take the roving laptop to a typical seat in each zone.
-   2. Choose the zone and press Start.
-   3. Let it run for at least a minute of service sound or pink noise, then Stop & save.
-4. **Later:**
-   - The **Room** page shows the predicted levels.
-   - If you move a permanent mic, the affected zones are flagged; resurvey them.
-
-Suggested workflow without a calibrator:
-1. Calibrate one mic with the best reference you have (a meter, otherwise a phone).
-2. **Copy** that calibration to every other mic. The mics then agree with each other, which is what the zone predictions depend on.
-3. When the calibrator arrives, recalibrate one mic and copy it again. New profiles take effect immediately.
-
-Changing preamp gain after calibrating makes the reading wrong; recalibrate.
-
-## Test
+`.claude/launch.json` has ready-made configurations, including a two-PC demo on one machine.
 
 ```bash
 dotnet test
 ```
+```bash
+cd web && npm run dev
+```
+`npm run dev` serves the dashboard with hot reload on :5173, proxying to the app.
 
 ```bash
-cd web && npm run typecheck
+powershell -ExecutionPolicy Bypass -File installer/build-installer.ps1
 ```
+This builds the dashboard and publishes everything self-contained, writing `artifacts/RtaSetup-<version>.exe`.
 
-## Notes and known limits
+| Folder | What's in it |
+|---|---|
+| `src/Rta.Core` | DSP (A/C weighting, 1/3-octave filters, Leq), calibration, records, zone model |
+| `src/Rta.Audio` | ASIO / WASAPI / test-signal capture, MIDI out |
+| `src/Rta.App` | The app: node, Hub, integrations, reports, NDI, web host |
+| `src/Rta.Tray` | Status icon |
+| `web/` | Dashboard (React + TypeScript + Vite) |
+| `installer/` | Inno Setup script and build script |
+| `tests/` | Unit tests |
 
-- Calibrated SPL = 10·log10(mean square re digital full scale) + profile offset.
-- Records are calibrated on the node with the profile current at that moment. Changing a profile does not rewrite history that is already logged.
-- A mic response file corrects the RTA and minute bands only; broadband A, C and Z use the flat offset.
-- At 48 kHz the 20 kHz band is squeezed near Nyquist (about 12 dB adjacent-band rejection instead of 18 dB). The band is kept so 48 and 96 kHz nodes report the same band set.
-- WASAPI runs at the rate set in Windows Sound settings, and Windows "audio enhancements" must be off for the input.
-- The node page's own graphs still keep history only in the browser. Stored history is on the Hub dashboard.
-- The ProPresenter Message readout sends the token in the v1 API's documented trigger format. Versions differ, so confirm it with your ProPresenter (the stage message path is the standard one).
-- MIDI has been built against the Windows MIDI API but not yet tried with a real device or loopMIDI.
-- Services run in Windows' isolated service session. ASIO capture from a service is untested and often fails, so use sign-in mode on PCs with interfaces. The installer was tested on this PC: Hub as a service, upgrade to Both at sign-in, the tray watchdog restarting a killed app, and a clean uninstall.
-- In sign-in mode, any user who can sign in to the PC can change the files in `C:\ProgramData\RtaApp`. Keep booth PCs to trusted accounts.
-- NDI: the app doesn't ship the NDI runtime; each PC needs NDI Tools or the NDI Runtime installed. Before distributing the app, follow NDI's SDK license terms (attribution, runtime redistribution). NDI® is a registered trademark of Vizrt NDI AB.
-- NDI feeds have been verified on this PC through the NDI 6 runtime (found and received). They have not yet been viewed in vMix, OBS, ProPresenter or NDI Studio Monitor, or sent across to another PC.
-- PDF reports use QuestPDF under its Community license (free for organisations under US$1M annual revenue). Check its terms before distributing the app.
-- Zone predictions are made live on the Hub. Readings a node backfills after an outage are stored for the mics, but zone history for that gap is not reconstructed.
-- Mic identity on the Hub is node + input number. Moving a mic to another input or PC creates a new entry; the old history stays under the old one.
+Design decisions and the reasoning behind them are in **[DESIGN.md](DESIGN.md)**.
+
+### Acknowledgements and licences
+- Built with:
+  - .NET / ASP.NET Core
+  - [NAudio](https://github.com/naudio/NAudio) (MIT)
+  - [SkiaSharp](https://github.com/mono/SkiaSharp) (MIT)
+  - [QuestPDF](https://www.questpdf.com) (Community licence: free for organisations under US$1M annual revenue)
+  - [uPlot](https://github.com/leeoniya/uPlot) (MIT)
+  - React (MIT)
+  - SQLite
+- **NDI®** is a registered trademark of Vizrt NDI AB. RTA uses the NDI runtime installed by NDI Tools and doesn't redistribute it. If you distribute this app, follow the NDI SDK licence terms.
+- Measurements are measurement-grade, not a certified IEC 61672 sound level meter. A and C weighting meet Class 1 tolerances in testing, but accuracy depends on your mics and calibration.
