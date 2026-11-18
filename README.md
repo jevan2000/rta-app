@@ -73,7 +73,7 @@ flowchart LR
 
 ## Installing
 
-Run **`RtaSetup-1.0.0.exe`** on each PC (ask whoever maintains the repo for the latest build, or [build it yourself](#for-developers)). It's a single installer with nothing else to download. Setup asks two questions:
+Download the latest **`RtaSetup-<version>.exe`** from the repo's [Releases page](https://github.com/jevan2000/rta-app/releases/latest) and run it on each PC (or [build it yourself](#for-developers)). It's a single installer with nothing else to download. Setup asks two questions:
 
 **1. What does this PC do?**
 
@@ -105,8 +105,8 @@ When setup finishes:
 <summary>Scripted / silent install</summary>
 
 ```bat
-RtaSetup-1.0.0.exe /VERYSILENT /ROLE=Both /RUNAS=signin /TASKS="firewall,startup"
-RtaSetup-1.0.0.exe /VERYSILENT /ROLE=Hub  /RUNAS=service /TASKS="firewall"
+RtaSetup-1.0.1.exe /VERYSILENT /ROLE=Both /RUNAS=signin /TASKS="firewall,startup"
+RtaSetup-1.0.1.exe /VERYSILENT /ROLE=Hub  /RUNAS=service /TASKS="firewall"
 ```
 `/ROLE` is `Both`, `Node` or `Hub`; `/RUNAS` is `signin` or `service`. The choices are saved in `C:\ProgramData\RtaApp\app.json`.
 </details>
