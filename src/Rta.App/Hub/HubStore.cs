@@ -129,7 +129,8 @@ public sealed partial class HubStore : IDisposable
         lock (_lock)
         {
             using (var cmd = Cmd("DELETE FROM nodes WHERE id=$id", ("$id", nodeId))) cmd.ExecuteNonQuery();
-            using (var cmd = Cmd("UPDATE mics SET hidden=1 WHERE node_id=$id", ("$id", nodeId))) cmd.ExecuteNonQuery();
+            // hidden=2 means "hidden because its node was removed"; it clears if the node comes back.
+            using (var cmd = Cmd("UPDATE mics SET hidden=2 WHERE node_id=$id AND hidden=0", ("$id", nodeId))) cmd.ExecuteNonQuery();
         }
     }
 
@@ -145,7 +146,8 @@ public sealed partial class HubStore : IDisposable
         using var cmd = Cmd("""
             INSERT INTO mics (key,node_id,channel,name,mic_label,profile_name,quality,uncertainty,calibrated,hidden,last_seen)
             VALUES ($key,$node,$ch,$name,$label,$prof,$q,$u,$cal,0,$now)
-            ON CONFLICT(key) DO UPDATE SET name=$name, mic_label=$label, profile_name=$prof, quality=$q, uncertainty=$u, calibrated=$cal, last_seen=$now, hidden=0
+            ON CONFLICT(key) DO UPDATE SET name=$name, mic_label=$label, profile_name=$prof, quality=$q, uncertainty=$u, calibrated=$cal, last_seen=$now,
+                hidden = CASE WHEN hidden = 2 THEN 0 ELSE hidden END
             """, ("$key", MicKey(nodeId, m.ChannelIndex)), ("$node", nodeId), ("$ch", m.ChannelIndex), ("$name", m.Name),
             ("$label", (object?)m.MicLabel ?? DBNull.Value), ("$prof", (object?)m.ProfileName ?? DBNull.Value),
             ("$q", (object?)m.Quality?.ToString() ?? DBNull.Value), ("$u", (object?)m.UncertaintyDb ?? DBNull.Value),
@@ -166,7 +168,7 @@ public sealed partial class HubStore : IDisposable
                 list.Add(new MicRow(r.GetInt32(0), r.GetString(1), r.GetString(2), r.GetInt32(3), r.GetString(4),
                     r.IsDBNull(5) ? null : r.GetString(5), r.IsDBNull(6) ? null : r.GetString(6), r.IsDBNull(7) ? null : r.GetString(7),
                     r.IsDBNull(8) ? null : Enum.Parse<CalibrationQuality>(r.GetString(8)), r.IsDBNull(9) ? null : r.GetDouble(9),
-                    r.GetInt32(10) == 1, r.GetInt32(11) == 1, r.GetInt64(12)));
+                    r.GetInt32(10) == 1, r.GetInt32(11) != 0, r.GetInt64(12)));
             return list;
         }
     }

@@ -104,6 +104,24 @@ public class HubStoreTests
     }
 
     [Fact]
+    public void Hidden_mics_stay_hidden_when_the_node_reconnects_but_forgotten_nodes_come_back()
+    {
+        using var tmp = new TempData();
+        using var store = new HubStore(tmp.Paths);
+        store.UpsertNode(Hello("n1", "b1", 0, 1), null, NodeAcceptance.Accepted);
+        store.UpdateMic(HubStore.MicKey("n1", 1), null, hidden: true);
+        store.UpsertNode(Hello("n1", "b1", 0, 1), null, NodeAcceptance.Accepted);      // reconnect / hello
+        Assert.True(store.ListMics().Single(m => m.ChannelIndex == 1).Hidden);
+        Assert.False(store.ListMics().Single(m => m.ChannelIndex == 0).Hidden);
+
+        store.ForgetNode("n1");
+        Assert.All(store.ListMics(), m => Assert.True(m.Hidden));
+        store.UpsertNode(Hello("n1", "b1", 0, 1), null, NodeAcceptance.Accepted);      // node comes back
+        Assert.False(store.ListMics().Single(m => m.ChannelIndex == 0).Hidden);       // un-hidden again
+        Assert.True(store.ListMics().Single(m => m.ChannelIndex == 1).Hidden);        // user's choice kept
+    }
+
+    [Fact]
     public void New_buffer_id_resets_the_ack_and_acceptance_is_kept()
     {
         using var tmp = new TempData();
