@@ -36,6 +36,7 @@ public sealed class ZoneEngine : BackgroundService
     private Dictionary<int, (ZoneModelData Model, List<SurveyRow> Surveys)>? _models;
     private IReadOnlyList<ZoneLiveView> _views = [];
     private DateTimeOffset _viewsAt = DateTimeOffset.MinValue;
+    private DateTimeOffset _nowAt = DateTimeOffset.MinValue;
 
     private sealed class ActiveSurvey
     {
@@ -158,9 +159,35 @@ public sealed class ZoneEngine : BackgroundService
 
     // ---------- live views ----------
 
+    /// <summary>Window for the "now" reading: about as responsive as a mic's Slow reading.</summary>
+    public const double NowWindowSeconds = 1.0;
+
+    /// <summary>
+    /// Live zone views. The "now" level is recomputed on every call (at most every 50 ms); the
+    /// 1-minute and 15-minute levels and the issue list are rebuilt once a second.
+    /// </summary>
     public IReadOnlyList<ZoneLiveView> Views()
     {
-        if (DateTimeOffset.UtcNow - _viewsAt < TimeSpan.FromMilliseconds(400)) return _views;
+        var at = DateTimeOffset.UtcNow;
+        if (at - _viewsAt >= TimeSpan.FromSeconds(1)) return BuildViews();
+        if (at - _nowAt < TimeSpan.FromMilliseconds(50)) return _views;
+        var models = Models();
+        var now = Now();
+        var list = _views.Select(v =>
+        {
+            if (!v.Surveyed || !models.TryGetValue(v.Id, out var m)) return v;
+            var p = PredictWindow(m.Model, now - NowWindowSeconds, now);
+            return v with { LA1s = R(p?.LA), LC1s = R(p?.LC), Bands = p?.Bands?.Select(b => Math.Round(b, 1)).ToArray(), RefsUsed = p?.RefsUsed ?? 0 };
+        }).ToList();
+        _views = list;
+        _nowAt = at;
+        return list;
+    }
+
+    private static double? R(double? v) => v is double d && d > Db.FloorDb + 1 ? Math.Round(d, 1) : null;
+
+    private IReadOnlyList<ZoneLiveView> BuildViews()
+    {
         var plan = _plan.Current;
         var models = Models();
         var now = Now();
@@ -191,7 +218,7 @@ public sealed class ZoneEngine : BackgroundService
                         issues.Add($"{label} was recalibrated since the survey (compensated automatically).");
                 }
 
-                var now1 = PredictWindow(m.Model, now - 1.2, now);
+                var now1 = PredictWindow(m.Model, now - NowWindowSeconds, now);
                 var p1m = PredictWindow(m.Model, now - 60, now);
                 var p15 = PredictWindow(m.Model, now - 900, now);
                 var used = now1?.RefsUsed ?? 0;
@@ -201,18 +228,17 @@ public sealed class ZoneEngine : BackgroundService
                 if (m.Model.Confidence < 0.5) issues.Add("Low survey confidence. Survey longer or with steadier sound.");
                 if (!m.Model.BandMode) issues.Add("Based on a manual (single-number) entry: less accurate when the mix changes.");
 
-                static double? R(double? v) => v is double d && d > Db.FloorDb + 1 ? Math.Round(d, 1) : null;
                 list.Add(new ZoneLiveView(z.Id, key, z.Name, f.Id, z.Mode, true, m.Surveys.Count, Math.Round(conf, 2), stale, m.Model.BandMode, issues,
                     R(now1?.LA), R(now1?.LC), R(p1m?.LA), R(p1m?.LC), R(p15?.LA), R(p15?.LC), sa, sc,
                     now1?.Bands?.Select(b => Math.Round(b, 1)).ToArray(), used, m.Model.Refs.Count));
             }
         _views = list;
-        _viewsAt = DateTimeOffset.UtcNow;
+        _viewsAt = _nowAt = DateTimeOffset.UtcNow;
         return list;
     }
 
     private string MicLabel(string key) =>
-        _store.ListMics().FirstOrDefault(m => m.Key == key)?.Label ?? key;
+        _state.CachedMics.FirstOrDefault(m => m.Key == key)?.Label ?? key;
 
     // ---------- logging ----------
 

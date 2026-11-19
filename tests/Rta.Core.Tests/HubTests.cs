@@ -122,6 +122,37 @@ public class HubStoreTests
     }
 
     [Fact]
+    public void Hub_state_serves_cached_rows_and_reloads_after_a_change()
+    {
+        using var tmp = new TempData();
+        using var store = new HubStore(tmp.Paths);
+        var state = new HubState(store, new HubSettingsStore(tmp.Paths));
+        store.UpsertNode(Hello("n1", "b1", 0), null, NodeAcceptance.Pending);
+        Assert.False(state.IsAccepted("n1"));
+
+        store.SetAcceptance("n1", NodeAcceptance.Accepted);
+        Assert.False(state.IsAccepted("n1"));          // cached until told about the change
+        state.InvalidateMics();
+        Assert.True(state.IsAccepted("n1"));
+        Assert.Single(state.Snapshot().Mics);
+    }
+
+    [Fact]
+    public async Task Live_signal_fires_on_new_readings_and_rearms()
+    {
+        using var tmp = new TempData();
+        using var store = new HubStore(tmp.Paths);
+        var state = new HubState(store, new HubSettingsStore(tmp.Paths));
+        var first = state.LiveSignal;
+        Assert.False(first.IsCompleted);
+        state.NotifyLive();
+        await first.WaitAsync(TimeSpan.FromSeconds(1));
+        Assert.False(state.LiveSignal.IsCompleted);    // a fresh signal for the next update
+        state.NotifyChanged();
+        Assert.True(first.IsCompleted);
+    }
+
+    [Fact]
     public void New_buffer_id_resets_the_ack_and_acceptance_is_kept()
     {
         using var tmp = new TempData();

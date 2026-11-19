@@ -44,8 +44,16 @@ public sealed class HubState(HubStore store, HubSettingsStore settings)
     private ServiceLive? _service;
     private readonly Dictionary<string, (double A, double C, double Seconds)> _serviceSums = [];
     private volatile IReadOnlyList<ActiveAlertView> _alerts = [];
-    private List<MicRow> _mics = [];
-    private DateTimeOffset _micsLoaded = DateTimeOffset.MinValue;
+    // Node and mic rows cached in memory, so the live path never waits on the database
+    // (which a long history query or report can hold for seconds).
+    private sealed record DbCache(List<NodeRow> Nodes, List<MicRow> Mics, DateTimeOffset At, long Gen);
+    private volatile DbCache? _cache;
+    private long _gen;
+    private int _refreshing;
+    private static readonly TimeSpan CacheTtl = TimeSpan.FromSeconds(5);
+
+    // Completed (and replaced) whenever a node sends new readings or something changes.
+    private TaskCompletionSource _liveSignal = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     public event Action? Changed;
 
@@ -63,17 +71,48 @@ public sealed class HubState(HubStore store, HubSettingsStore settings)
         InvalidateMics();
     }
 
-    public void InvalidateMics() => _micsLoaded = DateTimeOffset.MinValue;
+    /// <summary>Marks the cached node and mic rows out of date (after a node or mic changes).</summary>
+    public void InvalidateMics() => Interlocked.Increment(ref _gen);
 
-    private List<MicRow> Mics()
+    /// <summary>
+    /// Cached node and mic rows. After a change they're reloaded at once; otherwise they're refreshed
+    /// in the background every few seconds and the previous copy is served meanwhile.
+    /// </summary>
+    private DbCache Cache()
     {
-        if (DateTimeOffset.UtcNow - _micsLoaded > TimeSpan.FromSeconds(5))
-        {
-            _mics = store.ListMics();
-            _micsLoaded = DateTimeOffset.UtcNow;
-        }
-        return _mics;
+        var c = _cache;
+        if (c is null || c.Gen != Interlocked.Read(ref _gen)) return Load();
+        if (DateTimeOffset.UtcNow - c.At > CacheTtl && Interlocked.Exchange(ref _refreshing, 1) == 0)
+            _ = Task.Run(() =>
+            {
+                try { Load(); }
+                catch { /* keep serving the old copy; the next call retries */ }
+                finally { Volatile.Write(ref _refreshing, 0); }
+            });
+        return c;
     }
+
+    private DbCache Load()
+    {
+        var gen = Interlocked.Read(ref _gen);
+        var c = new DbCache(store.ListNodes(), store.ListMics(), DateTimeOffset.UtcNow, gen);
+        _cache = c;
+        return c;
+    }
+
+    private List<MicRow> Mics() => Cache().Mics;
+
+    public IReadOnlyList<MicRow> CachedMics => Cache().Mics;
+
+    public bool IsAccepted(string nodeId) => Cache().Nodes.Any(n => n.Id == nodeId && n.Acceptance == NodeAcceptance.Accepted);
+
+    // ---------- live push ----------
+
+    /// <summary>Completes when new readings arrive or something changes (then re-arm by reading it again).</summary>
+    public Task LiveSignal => Volatile.Read(ref _liveSignal).Task;
+
+    public void NotifyLive() =>
+        Interlocked.Exchange(ref _liveSignal, new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously)).TrySetResult();
 
     // ---------- service tracking ----------
 
@@ -94,7 +133,7 @@ public sealed class HubState(HubStore store, HubSettingsStore settings)
                 if (s > 0) _serviceSums[m.Key] = (a, c, s);
             }
         }
-        Changed?.Invoke();
+        NotifyChanged();
     }
 
     /// <summary>Adds newly stored per-second records to the running service's totals.</summary>
@@ -134,7 +173,8 @@ public sealed class HubState(HubStore store, HubSettingsStore settings)
     public HubLive Snapshot()
     {
         var s = settings.Current;
-        var nodes = store.ListNodes();
+        var cache = Cache();
+        var nodes = cache.Nodes;
         var nodeNames = nodes.ToDictionary(n => n.Id, n => n.Name);
         var accepted = nodes.Where(n => n.Acceptance == NodeAcceptance.Accepted).Select(n => n.Id).ToHashSet();
 
@@ -144,11 +184,11 @@ public sealed class HubState(HubStore store, HubSettingsStore settings)
             var online = IsOnline(c);
             return new NodeLiveView(n.Id, n.Name, n.Acceptance, online, c?.Address ?? n.Address, n.LastSeen, n.Version,
                 online && (c!.Live?.Running ?? false), online ? c!.Live?.Error : null, online ? c!.Live?.NodeWarnings ?? [] : [],
-                c?.Hello?.Mics.Count ?? Mics().Count(m => m.NodeId == n.Id && !m.Hidden), c?.Hello?.SampleRate);
+                c?.Hello?.Mics.Count ?? cache.Mics.Count(m => m.NodeId == n.Id && !m.Hidden), c?.Hello?.SampleRate);
         }).ToList();
 
         var mics = new List<MicLiveView>();
-        foreach (var m in Mics().Where(m => accepted.Contains(m.NodeId)))
+        foreach (var m in cache.Mics.Where(m => accepted.Contains(m.NodeId)))
         {
             _connections.TryGetValue(m.NodeId, out var c);
             var online = IsOnline(c);
@@ -199,5 +239,9 @@ public sealed class HubState(HubStore store, HubSettingsStore settings)
         return v is double d && d > Db.FloorDb + 1 ? d : null;
     }
 
-    public void NotifyChanged() => Changed?.Invoke();
+    public void NotifyChanged()
+    {
+        Changed?.Invoke();
+        NotifyLive();
+    }
 }

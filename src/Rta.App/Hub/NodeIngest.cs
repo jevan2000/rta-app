@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.WebSockets;
+using System.Threading.Channels;
 using Rta.Core.Protocol;
 
 namespace Rta.App.Hub;
@@ -24,6 +25,22 @@ public sealed class NodeIngest(HubStore store, HubState state, HubSettingsStore 
 
         NodeConnection? conn = null;
         var buf = new byte[256 * 1024];
+
+        // Record batches are saved on their own task so a backlog (after a reconnect) or a busy
+        // database never holds up the live readings arriving on this socket. The node keeps at most
+        // ~2000 records unacknowledged, so this queue stays small.
+        var batches = Channel.CreateUnbounded<(string NodeId, RecordBatch Batch)>(new UnboundedChannelOptions { SingleReader = true });
+        var saver = Task.Run(async () =>
+        {
+            await foreach (var (nodeId, batch) in batches.Reader.ReadAllAsync(ct))
+            {
+                var ack = store.StoreRecords(nodeId, batch.Items);
+                state.OnRecordsStored(nodeId, batch.Items);
+                try { await Send(Proto.Encode("ack", new Ack(ack))); }
+                catch (Exception) when (ws.State != WebSocketState.Open) { /* node left; it resends anything unacknowledged */ }
+            }
+        }, ct);
+
         try
         {
             while (ws.State == WebSocketState.Open && !ct.IsCancellationRequested)
@@ -75,17 +92,15 @@ public sealed class NodeIngest(HubStore store, HubState state, HubSettingsStore 
                     case "live":
                         if (conn is null) break;
                         conn.Live = Proto.Read<LiveUpdate>(payload);
-                        if (store.GetNode(conn.NodeId)?.Acceptance == NodeAcceptance.Accepted) zones.OnLive(conn.NodeId, conn.Live);
+                        if (state.IsAccepted(conn.NodeId)) zones.OnLive(conn.NodeId, conn.Live);
+                        state.NotifyLive();
                         break;
                     case "records":
                     {
                         if (conn is null) break;
-                        var node = store.GetNode(conn.NodeId);
-                        if (node?.Acceptance != NodeAcceptance.Accepted) break; // ignore until accepted
-                        var batch = Proto.Read<RecordBatch>(payload);
-                        var ack = store.StoreRecords(conn.NodeId, batch.Items);
-                        state.OnRecordsStored(conn.NodeId, batch.Items);
-                        await Send(Proto.Encode("ack", new Ack(ack)));
+                        if (!state.IsAccepted(conn.NodeId)) break; // ignore until accepted
+                        if (saver.IsFaulted) await saver; // surface a database failure and drop the connection
+                        batches.Writer.TryWrite((conn.NodeId, Proto.Read<RecordBatch>(payload)));
                         break;
                     }
                 }
@@ -96,6 +111,11 @@ public sealed class NodeIngest(HubStore store, HubState state, HubSettingsStore 
         catch (Exception ex) { log.LogWarning(ex, "Node connection from {Address} failed", address); }
         finally
         {
+            batches.Writer.TryComplete();
+            try { await saver; }
+            catch (OperationCanceledException) { }
+            catch (WebSocketException) { }
+            catch (Exception ex) { log.LogWarning(ex, "Saving records from {Address} failed", address); }
             if (conn is not null)
             {
                 state.Unregister(conn);
