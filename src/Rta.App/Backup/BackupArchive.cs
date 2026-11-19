@@ -94,6 +94,7 @@ public static class BackupArchive
                         if (includeHistory) sections.Add(History);
                     }
                 }
+                AddFile(zip, Path.Combine(dataDir, "pc.json"), "pc/pc.json"); // per-PC options, restored with node or Hub settings
                 if (File.Exists(Path.Combine(dataDir, "admin.json")))
                 {
                     sections.Add(Admin);
@@ -241,6 +242,9 @@ public static class BackupArchive
                     ? "Hub settings, plan, zones, surveys and logged history"
                     : "Hub settings, plan, zones, surveys and schedule");
             }
+            var pc = Path.Combine(work, "pc", "pc.json");
+            if ((want.Contains(Node) || want.Contains(Hub)) && File.Exists(pc))
+                SafeFile.WriteAllText(Path.Combine(dataDir, "pc.json"), File.ReadAllText(pc));
             if (want.Contains(Admin) && File.Exists(Path.Combine(work, "admin", "admin.json")))
             {
                 SafeFile.WriteAllText(Path.Combine(dataDir, "admin.json"), File.ReadAllText(Path.Combine(work, "admin", "admin.json")));

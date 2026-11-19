@@ -31,6 +31,7 @@ internal sealed class TrayApp : ApplicationContext
     private int _restarts;
     private HashSet<string> _alarms = [];
     private bool _busy;
+    private bool _startupPageDone;
 
     public TrayApp()
     {
@@ -88,6 +89,12 @@ internal sealed class TrayApp : ApplicationContext
             }
             _unreachableSince = DateTime.MinValue;
             _restarts = 0;
+            // Once per sign-in (this tray process), open the page chosen in the PC's settings.
+            if (!_startupPageDone)
+            {
+                _startupPageDone = true;
+                if (app["startupPath"]?.ToString() is { Length: > 0 } startup) Open(startup);
+            }
             var runsHub = app["runsHub"]?.GetValue<bool>() == true;
             var runsNode = app["runsNode"]?.GetValue<bool>() == true;
             _dashboardItem.Visible = runsHub;

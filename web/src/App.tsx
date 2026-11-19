@@ -94,7 +94,7 @@ export function App() {
               {r === 'alerts' && (live?.alerts.length ?? 0) > 0 ? <span className="count alarm">{live!.alerts.length}</span> : null}
             </a>
           ))}
-          <a href="/node/" className="ext" title="This PC's own node page (audio, inputs, calibration)">Node ↗</a>
+          <a href="/node/" target="_blank" rel="noopener" className="ext" title="This PC's own node page (audio, inputs, calibration)">Node ↗</a>
           <AuthButton />
         </nav>
       </header>

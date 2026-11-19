@@ -81,6 +81,17 @@
     <p class="muted">Tick “NDI audio” / “NDI meter” per input above. Sources appear as “&lt;this PC&gt; (RTA &lt;input&gt; audio)” and “… meter”. NDI® is a registered trademark of Vizrt NDI AB.</p>
     <p class="muted">★ = profile made for this mic or channel. Any profile can be used on any input; mismatches only show a warning.</p>
     <div class="actions"><span id="sMsg" class="muted"></span><button id="sSave" class="primary">Save</button></div>
+    <h3>This PC</h3>
+    <div class="form-grid">
+      <label>When someone signs in, open
+        <select id="pcStartup">
+          <option value="Off">Nothing</option>
+          <option value="Dashboard" id="pcStartupDash">The dashboard</option>
+          <option value="Node">This node page</option>
+        </select>
+      </label>
+    </div>
+    <p class="muted">Opens in the default browser once RTA is running (needs the RTA status icon to start at sign-in). <span id="pcMsg"></span></p>
     <h3>Backup &amp; restore</h3>
     <p class="muted">Settings survive updates on their own. Use a backup to move to a new PC or undo a change. It holds this PC’s inputs, device, levels and calibration profiles (plus the Hub’s settings, plan and zones if this PC is the Hub) and the admin password.</p>
     <div id="bNotes"></div>
