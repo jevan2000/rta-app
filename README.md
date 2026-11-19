@@ -5,7 +5,7 @@
 ![Live dashboard](docs/images/live.png)
 
 - **Measure:** calibrated dBC and dBA (Slow, Fast, 1-min, 15-min and whole-service Leq, peak), plus a 1/3-octave RTA for every mic.
-- **Many mics, many PCs:** any PC with an audio interface becomes a *node*. One PC is the *Hub* that collects everything; nodes find it automatically.
+- **Many mics, many PCs:** any PC with one or more audio interfaces becomes a *node*. One PC is the *Hub* that collects everything; nodes find it automatically.
 - **Predict every seat:** survey each seating zone once with a roving mic. After that, the permanent mics predict each zone's level live, band by band.
 - **Know when it's too loud:** warn and alarm levels per mic or zone, with an alert banner, a ProPresenter stage-display message, OSC, MIDI or webhooks.
 - **Keep a record:** services start automatically from a weekly schedule, and a PDF report is saved after each one. Every second is logged and can be exported to CSV.
@@ -119,7 +119,8 @@ RtaSetup-1.0.2.exe /VERYSILENT /ROLE=Hub  /RUNAS=service /TASKS="firewall"
 
 On each PC with mics, open **http://localhost:5180/node/** (or **Node ↗** in the dashboard, or the status icon's menu) and click **Settings**:
 
-- **Audio device:** pick the interface's **ASIO** driver. Leave 48 kHz unless you have a reason to change it.
+- **Audio interfaces:** pick the interface's **ASIO** driver. Leave 48 kHz unless you have a reason to change it.
+- **More than one interface on a PC** (e.g. a Focusrite and a Behringer): click **Add another interface**. Each one is metered on its own, so they don't need a shared clock. Windows allows only **one ASIO driver per program**, so choose the *Wasapi* entry for the others. Inputs on the second interface are numbered 2·1, 2·2…, and the first interface's inputs keep their numbers (and history). If one interface is unplugged, the others keep running and the node page says which one failed.
 - **Inputs:** tick the inputs with mics, give each a name (e.g. *FOH mic*), and type which physical mic is plugged in (e.g. *dbx RTA-M #1*).
 - **Hub:** leave it on *Automatically*. On a separate network segment, enter the Hub's address instead.
 

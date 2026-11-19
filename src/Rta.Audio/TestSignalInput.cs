@@ -9,28 +9,40 @@ namespace Rta.Audio;
 /// 2: same programme 5 dB quieter with less high end (a mic further back).
 /// 3: 1 kHz sine at -26 dBFS (a 94 dB calibrator when offset = 120 dB).
 /// 4: low-level white noise (room noise).
+/// A second virtual device ("Test signal 2") gives the same programme 4 dB quieter, for trying a
+/// node with two interfaces.
 /// </summary>
 public sealed class TestSignalInput : IAudioInput
 {
     public const string DeviceId = "test-signal";
+    public const string SecondDeviceId = "test-signal-2";
     private const int Channels = 4;
 
     private readonly int _rate;
+    private readonly bool _second;
     private Thread? _thread;
     private volatile bool _running;
 
-    public string DeviceName => "Test signal (virtual)";
+    public string DeviceName => _second ? "Test signal 2 (virtual)" : "Test signal (virtual)";
     public int ChannelCount => Channels;
     public double SampleRate => _rate;
 
     public event SamplesAvailableHandler? SamplesAvailable;
     public event Action<string>? Faulted;
 
-    public TestSignalInput(int sampleRate) => _rate = sampleRate;
+    public TestSignalInput(int sampleRate, string deviceId = DeviceId)
+    {
+        _rate = sampleRate;
+        _second = deviceId == SecondDeviceId;
+    }
 
     public static AudioDeviceInfo Info => new(AudioBackend.TestSignal, DeviceId, "Test signal (virtual)", Channels,
         ["Pink (front)", "Pink (rear, darker)", "1 kHz calibrator tone", "Room noise"], [44100, 48000, 96000],
         "Generated signals for trying the app without hardware.");
+
+    public static AudioDeviceInfo SecondInfo => new(AudioBackend.TestSignal, SecondDeviceId, "Test signal 2 (virtual)", Channels,
+        ["Pink (front)", "Pink (rear, darker)", "1 kHz calibrator tone", "Room noise"], [44100, 48000, 96000],
+        "A second virtual interface, 4 dB quieter, for trying more than one interface.");
 
     public void Start()
     {
@@ -46,8 +58,8 @@ public sealed class TestSignalInput : IAudioInput
         {
             var gens = new[]
             {
-                new SignalGenerator(_rate, TestSignalKind.PinkNoise, 1) { LevelDbfs = -30 },
-                new SignalGenerator(_rate, TestSignalKind.PinkNoise, 2) { LevelDbfs = -35 },
+                new SignalGenerator(_rate, TestSignalKind.PinkNoise, _second ? 11 : 1) { LevelDbfs = -30 },
+                new SignalGenerator(_rate, TestSignalKind.PinkNoise, _second ? 12 : 2) { LevelDbfs = -35 },
                 new SignalGenerator(_rate, TestSignalKind.Sine, 3) { FrequencyHz = 1000, LevelDbfs = -26 },
                 new SignalGenerator(_rate, TestSignalKind.WhiteNoise, 4) { LevelDbfs = -70 },
             };
@@ -63,8 +75,9 @@ public sealed class TestSignalInput : IAudioInput
             {
                 var t = produced / (double)_rate;
                 var swell = 6 * Math.Sin(2 * Math.PI * t / 20);
-                gens[0].LevelDbfs = -30 + swell;
-                gens[1].LevelDbfs = -33 + swell;
+                var trim = _second ? -4 : 0;
+                gens[0].LevelDbfs = -30 + swell + trim;
+                gens[1].LevelDbfs = -33 + swell + trim;
 
                 for (var ch = 0; ch < Channels; ch++)
                 {

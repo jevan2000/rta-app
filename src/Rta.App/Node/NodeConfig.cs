@@ -29,6 +29,14 @@ public sealed record Thresholds
 
 public enum HubConnectionMode { Auto, Manual, Off }
 
+/// <summary>One audio interface on this node. Its inputs are numbered Slot·100 + channel (see <see cref="InputNumber"/>).</summary>
+public sealed record DeviceConfig
+{
+    public int Slot { get; init; }
+    public AudioBackend Backend { get; init; } = AudioBackend.TestSignal;
+    public string DeviceId { get; init; } = TestSignalInput.DeviceId;
+}
+
 public sealed record NodeConfig
 {
     /// <summary>Stable identity of this node (generated on first run).</summary>
@@ -38,8 +46,12 @@ public sealed record NodeConfig
     public HubConnectionMode HubConnection { get; init; } = HubConnectionMode.Auto;
     /// <summary>For Manual: "host:port" or a URL, e.g. "192.168.1.20:5180".</summary>
     public string? HubAddress { get; init; }
+    /// <summary>The first audio interface (kept in step with <see cref="Devices"/>[0] for settings files from 1.0.x).</summary>
     public AudioBackend Backend { get; init; } = AudioBackend.TestSignal;
     public string DeviceId { get; init; } = TestSignalInput.DeviceId;
+    /// <summary>All audio interfaces, metered side by side. Settings from 1.0.x have none: the first is then Backend/DeviceId.</summary>
+    public List<DeviceConfig> Devices { get; init; } = [];
+    /// <summary>Sample rate for every interface, so all mics share the same 1/3-octave bands.</summary>
     public int SampleRate { get; init; } = 48000;
     public bool AutoStart { get; init; } = true;
     public List<InputConfig> Inputs { get; init; } = [];
@@ -48,6 +60,28 @@ public sealed record NodeConfig
     public int NdiMeterFps { get; init; } = 10;
 
     public static readonly int[] AllowedSampleRates = [44100, 48000, 88200, 96000];
+
+    /// <summary>Fills <see cref="Devices"/> from the single-device fields of older settings, and mirrors the first device back.</summary>
+    public NodeConfig Normalized()
+    {
+        var devices = (Devices.Count > 0 ? Devices : [new DeviceConfig { Slot = 0, Backend = Backend, DeviceId = DeviceId }])
+            .OrderBy(d => d.Slot).ToList();
+        return this with { Devices = devices, Backend = devices[0].Backend, DeviceId = devices[0].DeviceId };
+    }
+
+    /// <summary>Problems that stop these devices being used together, or null.</summary>
+    public string? DeviceProblem()
+    {
+        if (Devices.Count == 0) return "Choose at least one audio interface.";
+        if (Devices.Count > InputNumber.MaxDevices) return $"Up to {InputNumber.MaxDevices} audio interfaces per node.";
+        if (Devices.Any(d => d.Slot is < 0 or >= InputNumber.MaxDevices) || Devices.Select(d => d.Slot).Distinct().Count() != Devices.Count)
+            return "Each audio interface needs its own slot.";
+        if (Devices.GroupBy(d => (d.Backend, d.DeviceId.ToLowerInvariant())).Any(g => g.Count() > 1))
+            return "The same audio interface is listed twice.";
+        if (Devices.Count(d => d.Backend == AudioBackend.Asio) > 1)
+            return "Only one interface can use ASIO: Windows allows one ASIO driver per program. Add the others through Windows audio (WASAPI).";
+        return null;
+    }
 }
 
 public sealed class NodePaths
@@ -72,7 +106,7 @@ public sealed class NodeConfigStore(NodePaths paths)
     {
         lock (_lock)
         {
-            var cfg = SafeFile.ReadJson<NodeConfig>(paths.ConfigFile, CalibrationStore.Json) ?? new NodeConfig();
+            var cfg = (SafeFile.ReadJson<NodeConfig>(paths.ConfigFile, CalibrationStore.Json) ?? new NodeConfig()).Normalized();
             if (string.IsNullOrWhiteSpace(cfg.NodeId))
             {
                 cfg = cfg with { NodeId = Guid.NewGuid().ToString("N") };

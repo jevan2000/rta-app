@@ -73,7 +73,7 @@ public static class CalibrationChecks
             w.Add($"Profile was made for mic '{profile.MicName}' but this input is labelled '{input.MicLabel}'.");
 
         if (profile.ChannelIndex is int ch && ch != input.ChannelIndex)
-            w.Add($"Profile was made on input {ch + 1}; it is assigned to input {input.ChannelIndex + 1}. Preamp gain may differ.");
+            w.Add($"Profile was made on input {InputNumber.Label(ch)}; it is assigned to input {InputNumber.Label(input.ChannelIndex)}. Preamp gain may differ.");
 
         if (!string.IsNullOrWhiteSpace(profile.DeviceName) && !string.IsNullOrWhiteSpace(input.DeviceName) &&
             !string.Equals(profile.DeviceName, input.DeviceName, StringComparison.OrdinalIgnoreCase))

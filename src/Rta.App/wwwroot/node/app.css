@@ -81,6 +81,10 @@ dialog::backdrop { background: rgba(0, 0, 0, .6); }
 table.inputs, table.profiles { width: 100%; border-collapse: collapse; }
 table.inputs th, table.profiles th { text-align: left; color: var(--muted); font-weight: normal; font-size: 12px; padding: 4px; border-bottom: 1px solid var(--line); }
 table.inputs td, table.profiles td { padding: 4px; border-bottom: 1px solid var(--grid); }
+table.inputs tr.devhead td { padding-top: 12px; color: var(--muted); font-size: 12px; font-weight: 600; border-bottom: 1px solid var(--line); }
+.devrow { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; }
+.devrow select { flex: 1; min-width: 0; }
+.devrow .slot { width: 1.5em; color: var(--muted); text-align: right; }
 table.profiles td button { padding: 2px 8px; font-size: 12px; }
 .result { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; margin: 12px 0; }
 .result div { background: var(--panel-2); border-radius: 6px; padding: 8px 10px; display: flex; flex-direction: column; }

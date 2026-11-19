@@ -32,7 +32,7 @@ public static class AudioInputFactory
     {
         AudioBackend.Asio => new AsioInput(deviceId, sampleRate),
         AudioBackend.Wasapi => new WasapiInput(deviceId, sampleRate),
-        AudioBackend.TestSignal => new TestSignalInput(sampleRate),
+        AudioBackend.TestSignal => new TestSignalInput(sampleRate, deviceId),
         _ => throw new ArgumentOutOfRangeException(nameof(backend)),
     };
 }

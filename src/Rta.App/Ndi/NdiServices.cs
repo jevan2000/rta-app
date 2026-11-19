@@ -1,3 +1,4 @@
+using Rta.Core;
 using System.Collections.Concurrent;
 using System.Globalization;
 using System.Security;
@@ -117,7 +118,7 @@ public sealed class NodeNdiService(MeteringService metering, ILogger<NodeNdiServ
                 channels.TryGetValue(ch, out var st);
                 var L = st?.Levels;
                 var rough = st?.ProfileQuality is CalibrationQuality.Low or CalibrationQuality.VeryLow;
-                var data = new TileData(st?.Name ?? $"Input {ch + 1}", st?.MicLabel ?? cfg.NodeName,
+                var data = new TileData(st?.Name ?? $"Input {InputNumber.Label(ch)}", st?.MicLabel ?? cfg.NodeName,
                     L is null ? "" : !L.Calibrated ? "UNCAL dBFS" : rough ? "≈ unreliable cal" : "calibrated",
                     L is null ? TileTone.Muted : !L.Calibrated || rough ? TileTone.Warn : TileTone.Ok,
                     L?.LCS, L?.LAS, L is { Coverage1mSeconds: >= 5 } ? L.LCeq1m : null, L?.LCeq15m, L?.LCeqSession,
@@ -133,15 +134,18 @@ public sealed class NodeNdiService(MeteringService metering, ILogger<NodeNdiServ
             }
     }
 
-    private void OnRawAudio(float[] interleaved, int stride, double rate)
+    private void OnRawAudio(int slot, float[] interleaved, int stride, double rate)
     {
         if (_audio.IsEmpty) return;
         var frames = interleaved.Length / stride;
         foreach (var a in _audio.Values)
         {
-            if (a.Channel >= stride) continue;
+            // Each interface delivers its own buffers; take this input's channel from its interface only.
+            if (InputNumber.Slot(a.Channel) != slot) continue;
+            var ch = InputNumber.DeviceChannel(a.Channel);
+            if (ch >= stride) continue;
             if (a.Buffer.Length != frames) a.Buffer = new float[frames];
-            for (var i = 0; i < frames; i++) a.Buffer[i] = interleaved[i * stride + a.Channel];
+            for (var i = 0; i < frames; i++) a.Buffer[i] = interleaved[i * stride + ch];
             try { a.Sender.SendAudio(a.Buffer, 1, frames, (int)rate); }
             catch (Exception ex) { _error = "NDI audio: " + ex.Message; }
         }

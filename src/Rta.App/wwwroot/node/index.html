@@ -46,7 +46,6 @@
     <form method="dialog" class="dlg-head"><h2>Settings</h2><button>Close</button></form>
     <div class="form-grid">
       <label>Node name <input id="sName"></label>
-      <label>Audio device <select id="sDevice"></select></label>
       <label>Sample rate <select id="sRate"></select></label>
       <label class="check"><input type="checkbox" id="sAuto"> Start audio automatically</label>
     </div>
@@ -62,7 +61,11 @@
       <label id="sHubAddrWrap">Hub address <input id="sHubAddr" placeholder="e.g. 192.168.1.20:5180"></label>
     </div>
     <p id="sHubInfo" class="muted"></p>
+    <h3>Audio interfaces</h3>
+    <div id="sDevices"></div>
+    <div class="actions" style="justify-content:flex-start"><button id="sAddDevice">Add another interface</button></div>
     <p id="sDeviceNote" class="muted"></p>
+    <p class="muted">Every interface is metered on its own, so they don't need a shared clock. Only one can use ASIO (a Windows limit); use Windows audio (WASAPI) for the others. Inputs on a second interface are numbered 2·1, 2·2…</p>
     <p id="sRateWarn" class="warn" hidden>96 kHz roughly doubles CPU use (and network use once NDI audio is added). 48 kHz is plenty for SPL metering.</p>
     <h3>Warn / alarm levels <span class="muted">(colours the live readings)</span></h3>
     <div class="form-grid four">
