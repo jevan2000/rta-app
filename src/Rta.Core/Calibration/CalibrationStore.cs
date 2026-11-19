@@ -28,15 +28,11 @@ public sealed class CalibrationStore
         {
             if (_cache is not null) return _cache;
             var list = new List<CalibrationProfile>();
-            foreach (var f in Directory.EnumerateFiles(_dir, "*.json"))
-            {
-                try
-                {
-                    var p = JsonSerializer.Deserialize<CalibrationProfile>(File.ReadAllText(f), Json);
-                    if (p is not null) list.Add(p);
-                }
-                catch (JsonException) { /* skip unreadable file */ }
-            }
+            var files = Directory.EnumerateFiles(_dir, "*.json").Where(f => f.EndsWith(".json", StringComparison.OrdinalIgnoreCase))
+                .Concat(Directory.EnumerateFiles(_dir, "*.json.bak").Select(b => b[..^4])) // a profile caught mid-save
+                .Distinct(StringComparer.OrdinalIgnoreCase);
+            foreach (var f in files)
+                if (SafeFile.ReadJson<CalibrationProfile>(f, Json) is { } p) list.Add(p);
             return _cache = list.OrderBy(p => p.Name, StringComparer.OrdinalIgnoreCase).ToList();
         }
     }
@@ -48,7 +44,7 @@ public sealed class CalibrationStore
         if (!IsValidId(profile.Id)) profile = profile with { Id = Guid.NewGuid().ToString("N") };
         lock (_lock)
         {
-            File.WriteAllText(PathFor(profile.Id), JsonSerializer.Serialize(profile, Json));
+            SafeFile.WriteAllText(PathFor(profile.Id), JsonSerializer.Serialize(profile, Json));
             _cache = null;
         }
         return profile;
@@ -75,7 +71,7 @@ public sealed class CalibrationStore
         {
             var path = PathFor(id);
             if (!File.Exists(path)) return false;
-            File.Delete(path);
+            SafeFile.Delete(path);
             _cache = null;
             return true;
         }

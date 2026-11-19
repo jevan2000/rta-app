@@ -334,14 +334,32 @@ For hearing-risk context, the NIOSH guideline is **85 dBA averaged over 8 hours*
   - the plan (`plan.json`, `plan-images\`)
   - the Hub database (`hub.db`)
   - the node's 7-day buffer
-  - reports and logs
+  - automatic backups (`backups\`), reports and logs
+- **Updates keep everything.** Installing a new version over an old one never touches this folder (except `app.json`, which keeps your role, start mode and any address or port you changed). Uninstalling leaves it too.
+- **Power cuts:** settings are written safely (flushed to disk, previous version kept as `.bak`). If a file is ever damaged, RTA sets it aside as `<name>.corrupt-<time>`, uses the previous version and says so on the backup panel, rather than starting from defaults.
 - **Retention:** per-second data is kept for 1 year by default (Settings); 1-minute summaries are kept forever. Expect about 1 GB per mic per year.
-- **Backups:** stop RTA, then copy the whole folder. Also export each calibration profile (node page → Calibration → Export); it's handy when setting up a replacement PC.
 - **Security:**
   - Set the **admin password** straight away.
   - Viewing is open to the local network by design; every change needs the password, and the first password can only be set on the PC itself.
   - Keep RTA on your private church network. **Don't port-forward it to the internet.**
   - In sign-in mode, anyone who can sign in to that PC can change files in the data folder, so limit booth PCs to trusted accounts.
+
+### Backups, and moving to a new PC
+
+**Backup & restore** is on the dashboard's **Settings** page, and in **Settings** on each node page (for node-only PCs).
+
+- **Download backup** saves one `.rtabackup` file with this PC's inputs, audio device, warn/alarm levels and calibration profiles; on the Hub, its settings, alert rules, integrations, NDI, floor plan, zones, surveys, mic names and schedule; and the admin password. Tick **Include logged history** for a complete copy (much larger).
+- **Automatic backups** (settings only) are saved:
+  - every day (kept for 2 weeks)
+  - the first time a new version runs, with the old version's settings (last 5 kept)
+  - before every restore (last 5 kept)
+
+  Each one has **Restore…** next to it, which is the quickest way to undo a change or an update.
+- **Restore from file…** shows what's in the backup and lets you choose the parts. RTA saves a backup of the current settings, restarts, and applies the restore before anything else starts. Restoring settings keeps this PC's logged history; only a full backup with **logged history** ticked replaces it.
+- **Replacing a PC:** install RTA on the new PC with the same role, restore the old PC's backup and tick **This PC replaces …**. The new PC takes over the old one's identity, so its mics, zones, surveys and history line up (restore a full backup to bring the history across). Turn the old PC off first so the two don't both report as the same node.
+- **Setting up an extra PC like an existing one:** restore that PC's backup with **This PC replaces …** unticked. Only the settings are copied; the new PC keeps its own identity.
+
+Keep a recent backup somewhere off the PC (a USB stick or a shared drive), especially after calibrating or surveying.
 
 ---
 

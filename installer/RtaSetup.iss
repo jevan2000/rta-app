@@ -189,7 +189,12 @@ begin
   Exe := ExpandConstant('{app}\RtaApp.exe');
 
   // A node-only PC keeps its own page local; a Hub must be reachable from the network.
-  if Role = 'Node' then Urls := 'http://localhost:5180' else Urls := 'http://0.0.0.0:5180';
+  // An address or port changed by hand in app.json is kept, unless the role changed.
+  Urls := ExistingValue('Urls');
+  if (Urls = '') or (CompareText(ExistingValue('Mode'), Role) <> 0) then
+  begin
+    if Role = 'Node' then Urls := 'http://localhost:5180' else Urls := 'http://0.0.0.0:5180';
+  end;
   Json := '{' + #13#10 +
     '  "Mode": "' + Role + '",' + #13#10 +
     '  "RunAs": "' + RunAs + '",' + #13#10 +
@@ -206,6 +211,8 @@ begin
     Exec2(ExpandConstant('{sys}\sc.exe'), 'create {#ServiceName} binPath= "\"' + Exe + '\"" start= delayed-auto DisplayName= "RTA Sound Monitor" obj= "NT AUTHORITY\LocalService"');
     Exec2(ExpandConstant('{sys}\sc.exe'), 'description {#ServiceName} "Sound level monitoring: RTA mics, Hub dashboard, logging and alerts."');
     Exec2(ExpandConstant('{sys}\sc.exe'), 'failure {#ServiceName} reset= 86400 actions= restart/5000/restart/10000/restart/60000');
+    // Also restart after a deliberate non-zero exit (restoring a backup restarts the app this way).
+    Exec2(ExpandConstant('{sys}\sc.exe'), 'failureflag {#ServiceName} 1');
     Exec2(ExpandConstant('{sys}\sc.exe'), 'start {#ServiceName}');
   end
   else

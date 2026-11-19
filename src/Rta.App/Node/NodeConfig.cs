@@ -1,3 +1,4 @@
+using Rta.Core;
 using System.Text.Json;
 using Rta.Audio;
 using Rta.Core.Calibration;
@@ -71,13 +72,7 @@ public sealed class NodeConfigStore(NodePaths paths)
     {
         lock (_lock)
         {
-            NodeConfig cfg;
-            if (!File.Exists(paths.ConfigFile)) cfg = new NodeConfig();
-            else
-            {
-                try { cfg = JsonSerializer.Deserialize<NodeConfig>(File.ReadAllText(paths.ConfigFile), CalibrationStore.Json) ?? new NodeConfig(); }
-                catch (JsonException) { cfg = new NodeConfig(); }
-            }
+            var cfg = SafeFile.ReadJson<NodeConfig>(paths.ConfigFile, CalibrationStore.Json) ?? new NodeConfig();
             if (string.IsNullOrWhiteSpace(cfg.NodeId))
             {
                 cfg = cfg with { NodeId = Guid.NewGuid().ToString("N") };
@@ -94,8 +89,6 @@ public sealed class NodeConfigStore(NodePaths paths)
 
     private void SaveLocked(NodeConfig config)
     {
-        var tmp = paths.ConfigFile + ".tmp";
-        File.WriteAllText(tmp, JsonSerializer.Serialize(config, CalibrationStore.Json));
-        File.Move(tmp, paths.ConfigFile, overwrite: true);
+        SafeFile.WriteJson(paths.ConfigFile, config, CalibrationStore.Json);
     }
 }

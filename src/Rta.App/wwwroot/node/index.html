@@ -81,6 +81,15 @@
     <p class="muted">Tick “NDI audio” / “NDI meter” per input above. Sources appear as “&lt;this PC&gt; (RTA &lt;input&gt; audio)” and “… meter”. NDI® is a registered trademark of Vizrt NDI AB.</p>
     <p class="muted">★ = profile made for this mic or channel. Any profile can be used on any input; mismatches only show a warning.</p>
     <div class="actions"><span id="sMsg" class="muted"></span><button id="sSave" class="primary">Save</button></div>
+    <h3>Backup &amp; restore</h3>
+    <p class="muted">Settings survive updates on their own. Use a backup to move to a new PC or undo a change. It holds this PC’s inputs, device, levels and calibration profiles (plus the Hub’s settings, plan and zones if this PC is the Hub) and the admin password.</p>
+    <div id="bNotes"></div>
+    <div class="actions" style="justify-content:flex-start">
+      <button id="bDownload">Download backup</button>
+      <label class="filebtn">Restore from file… <input type="file" id="bFile" accept=".rtabackup"></label>
+      <span id="bMsg" class="muted"></span>
+    </div>
+    <div id="bList"></div>
   </dialog>
 
   <!-- Calibration -->
