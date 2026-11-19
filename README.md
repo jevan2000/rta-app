@@ -297,6 +297,7 @@ For hearing-risk context, the NIOSH guideline is **85 dBA averaged over 8 hours*
 - Set the power plan to **never sleep**, and set Windows Update **active hours** to cover service times.
 - In the BIOS, set **power on after power loss**, if available.
 - Hub-only PCs can run **as a service** and need none of this.
+- To have the dashboard (or the node page) **pop up in the browser** when the PC signs in, choose it under **Settings → This PC → When someone signs in, open** (dashboard Settings page, or Settings on the node page). The RTA status icon opens it once RTA is running, so the icon must start at sign-in (it always does in sign-in mode).
 
 ---
 

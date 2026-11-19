@@ -313,6 +313,7 @@ let draftConfig = null;
 async function openSettings() {
   $('settings').showModal();
   loadBackups();
+  loadPcSettings();
   $('sMsg').textContent = 'Loading devices…';
   [draftConfig, profiles] = await Promise.all([api('/config'), api('/calibration/profiles')]);
   devices = await api('/devices');
@@ -712,4 +713,20 @@ $('bFile').onchange = async (e) => {
     $('bMsg').textContent = '';
     await restorePreview(p);
   } catch (err) { $('bMsg').textContent = err.message; }
+};
+
+// ---------- this PC ----------
+
+async function loadPcSettings() {
+  try {
+    const a = await (await fetch('/api/app')).json();
+    $('pcStartupDash').hidden = !a.runsHub;
+    $('pcStartup').value = a.openAtStartup;
+    $('pcMsg').textContent = '';
+  } catch { /* shown elsewhere */ }
+}
+
+$('pcStartup').onchange = async () => {
+  try { await api('/pc', { method: 'PUT', body: JSON.stringify({ openAtStartup: $('pcStartup').value }) }); $('pcMsg').textContent = 'Saved.'; }
+  catch (e) { $('pcMsg').textContent = e.message; loadPcSettings(); }
 };

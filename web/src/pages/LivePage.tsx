@@ -25,7 +25,7 @@ export function LivePage() {
           {pending.length} new node{pending.length > 1 ? 's' : ''} waiting for approval: {pending.map((n) => n.name).join(', ')}. <a href="#/nodes">Review on the Nodes page</a>.
         </div>
       )}
-      {mics.length === 0 && <Empty>No mics yet. Start a node (this PC’s node page is at <a href="/node/">/node/</a>) and accept it on the <a href="#/nodes">Nodes</a> page.</Empty>}
+      {mics.length === 0 && <Empty>No mics yet. Start a node (this PC’s node page is at <a href="/node/" target="_blank" rel="noopener">/node/</a>) and accept it on the <a href="#/nodes">Nodes</a> page.</Empty>}
       {[...byNode.entries()].map(([nodeId, list]) => {
         const node = live.nodes.find((n) => n.id === nodeId);
         return (

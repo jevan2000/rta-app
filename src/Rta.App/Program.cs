@@ -45,6 +45,7 @@ builder.Services.Configure<JsonOptions>(o =>
 builder.Services.AddSingleton(mode);
 builder.Services.AddSingleton<NodePaths>();
 builder.Services.AddSingleton<AdminAuth>();
+builder.Services.AddSingleton<PcSettingsStore>();
 
 var dataDir = new NodePaths(builder.Configuration).DataDir;
 // Before anything opens the data folder: apply a restore queued from the backup page, and keep a
@@ -133,11 +134,19 @@ app.UseRouting();
 app.UseAuthentication();
 app.UseAdminGuard();
 
-app.MapGet("/api/app", () => new
+app.MapGet("/api/app", (PcSettingsStore pc) => new
 {
     role = mode.Role, runsNode = mode.RunsNode, runsHub = mode.RunsHub, version = AppMode.Version,
     runAs = WindowsServiceHelpers.IsWindowsService() ? "service" : builder.Configuration["RunAs"] ?? "process",
     dataDir,
+    openAtStartup = pc.Current.OpenAtStartup,
+    // What the status icon opens when someone signs in (null: nothing).
+    startupPath = pc.StartupPath(),
+});
+app.MapPut("/api/pc", (PcSettings s, PcSettingsStore pc) =>
+{
+    try { return Results.Ok(pc.Save(s)); }
+    catch (ArgumentException ex) { return Results.Problem(ex.Message, statusCode: 400); }
 });
 app.MapAuthEndpoints();
 app.MapBackupEndpoints(mode, builder.Configuration);

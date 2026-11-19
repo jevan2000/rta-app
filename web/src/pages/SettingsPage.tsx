@@ -36,13 +36,39 @@ export function SettingsPage() {
         <p className="muted small">Per-minute summaries (including 1/3-octave bands) are kept forever; per-second data uses roughly 1 GB per mic per year. Auto-accept is convenient but lets any PC on the network add readings.</p>
         <div className="actions"><span className="muted">{msg}</span><button className="primary" onClick={save}>Save</button></div>
       </section>
+      <ThisPcSection />
       <PasswordSection />
       <BackupPanel />
       <section className="panel">
         <h3>About</h3>
-        <p className="muted small">Hub id {form.hubId}. Each node’s audio, inputs and calibration are set on that node’s own page (<a href="/node/">this PC’s node page</a>).</p>
+        <p className="muted small">Hub id {form.hubId}. Each node’s audio, inputs and calibration are set on that node’s own page (<a href="/node/" target="_blank" rel="noopener">this PC’s node page</a>).</p>
       </section>
     </>
+  );
+}
+
+function ThisPcSection() {
+  const { data, reload } = useFetch<{ runsNode: boolean; runsHub: boolean; openAtStartup: string; runAs: string }>('/api/app');
+  const [msg, setMsg] = useState('');
+  if (!data) return null;
+  const set = async (openAtStartup: string) => {
+    try { await api('/api/pc', { method: 'PUT', json: { openAtStartup } }); setMsg('Saved.'); reload(); }
+    catch (e) { setMsg((e as Error).message); }
+  };
+  return (
+    <section className="panel">
+      <h3>This PC</h3>
+      <div className="form-grid">
+        <label>When someone signs in, open
+          <select value={data.openAtStartup} onChange={(e) => set(e.target.value)}>
+            <option value="Off">Nothing</option>
+            {data.runsHub && <option value="Dashboard">The dashboard</option>}
+            {data.runsNode && <option value="Node">This PC’s node page</option>}
+          </select>
+        </label>
+      </div>
+      <p className="muted small">The page opens in the default browser once RTA is running. It needs the RTA status icon to start at sign-in (it does in sign-in mode; for a service, tick “Show the RTA status icon” in setup).{msg && <> <b>{msg}</b></>}</p>
+    </section>
   );
 }
 
