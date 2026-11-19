@@ -32,7 +32,7 @@ export async function api<T = unknown>(path: string, init: RequestInit & { json?
 
 export const getAuth = () => api<AuthStatus>('/api/auth/status');
 
-/** Live Hub snapshot over WebSocket (5×/s), reconnecting automatically. */
+/** Live Hub snapshot over WebSocket, pushed as readings arrive (up to 10×/s); reconnects automatically. */
 export function useHubLive(): { live: HubLive | null; connected: boolean } {
   const [live, setLive] = useState<HubLive | null>(null);
   const [connected, setConnected] = useState(false);

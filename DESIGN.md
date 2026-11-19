@@ -156,7 +156,7 @@ Status: design agreed 2026-11-17. Phase 1 (Node) built 2026-11-17. Phase 2 (Hub)
 
 ## Decisions made during Phase 3
 
-- **Gap-free band data:** each live message (5×/s) carries `Interval` levels: calibrated LA, LC, LZ and band Leq over exactly the audio since the previous message. The Hub keeps 15 minutes of these per mic, timestamped on arrival at the Hub. That gives time alignment across nodes to about 0.2 s, which is plenty over a 60 s+ survey.
+- **Gap-free band data:** each live message (10×/s) carries `Interval` levels: calibrated LA, LC, LZ and band Leq over exactly the audio since the previous message. The Hub keeps 15 minutes of these per mic, timestamped on arrival at the Hub. That gives time alignment across nodes to about 0.1 s, which is plenty over a 60 s+ survey.
 - **Survey:**
   - Accumulates the rover and every permanent (plan) mic over the same window, plus 5-s chunks of the rover−ref dBC offset.
   - Confidence = duration factor × steadiness (standard error of the chunk offsets) × band coverage (share of the 50 Hz–10 kHz bands with signal).
@@ -237,6 +237,11 @@ Status: design agreed 2026-11-17. Phase 1 (Node) built 2026-11-17. Phase 2 (Hub)
 - MIDI output is untested on a real device.
 - Zone prediction has been tested with test signals only. Validate it in the room: survey a zone, then compare the prediction against the roving mic left in place during a later service.
 - Multi-PC discovery has only been tested with two processes on one PC (the beacon went out over the LAN interface). Test it with a second real PC, and check that Windows Firewall prompts for TCP 5180 and UDP 5181.
+
+### Live latency (1.0.2)
+- Nodes send live readings to the Hub 10×/s (matching the node page). The Hub pushes to dashboards as soon as readings arrive (at most 10×/s, at least once a second) instead of on its own timer, so the dashboard trails the node page by under ~100 ms.
+- The live path never waits on SQLite: node and mic rows are cached in `HubState` (reloaded at once after a change, otherwise refreshed in the background), and record batches are saved on a separate task per node connection.
+- A zone's "now" level is a 1 s Leq recomputed on every push; its 1-minute and 15-minute levels and issues are rebuilt once a second.
 
 ### Settings safety and backups (1.0.2)
 - **Safe writes:** every settings file (`node.json`, `hub.json`, `plan.json`, `admin.json`, calibration profiles) goes through `SafeFile`: write a temp file, flush to disk, swap in with `File.Replace`, keeping the previous version as `.bak`. An unreadable file is renamed `.corrupt-<time>` and the `.bak` is used; it never silently becomes defaults that then overwrite it. Recoveries are logged and shown on the backup panel.
