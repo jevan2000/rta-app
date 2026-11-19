@@ -5,6 +5,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Rta.App.Node;
+using Rta.Core;
 using Rta.Core.Calibration;
 
 namespace Rta.App.Security;
@@ -28,8 +29,7 @@ public sealed class AdminAuth
     public AdminAuth(NodePaths paths)
     {
         _file = Path.Combine(paths.DataDir, "admin.json");
-        try { _record = File.Exists(_file) ? JsonSerializer.Deserialize<PasswordRecord>(File.ReadAllText(_file), CalibrationStore.Json) : null; }
-        catch (JsonException) { _record = null; }
+        _record = SafeFile.ReadJson<PasswordRecord>(_file, CalibrationStore.Json);
     }
 
     public bool PasswordSet { get { lock (_lock) return _record is not null; } }
@@ -43,7 +43,7 @@ public sealed class AdminAuth
         var rec = new PasswordRecord(Convert.ToBase64String(salt), Convert.ToBase64String(hash), Iterations);
         lock (_lock)
         {
-            File.WriteAllText(_file, JsonSerializer.Serialize(rec, CalibrationStore.Json));
+            SafeFile.WriteJson(_file, rec, CalibrationStore.Json);
             _record = rec;
         }
     }

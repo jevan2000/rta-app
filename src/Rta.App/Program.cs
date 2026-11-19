@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Http.Json;
 using Rta.App;
+using Rta.App.Backup;
 using Rta.App.Hub;
 using Rta.App.Hub.Integrations;
 using Rta.App.Hub.Reports;
@@ -21,7 +22,7 @@ var builder = WebApplication.CreateBuilder(new WebApplicationOptions
     ContentRootPath = installedLayout || WindowsServiceHelpers.IsWindowsService() ? AppContext.BaseDirectory : null,
 });
 
-// Settings chosen in the installer (Mode, Urls, RunAs) live in <data folder>pp.json; the command line still wins.
+// Settings chosen in the installer (Mode, Urls, RunAs) live in <data folder>\app.json; the command line still wins.
 var installedConfig = Path.Combine(new NodePaths(builder.Configuration).DataDir, "app.json");
 builder.Configuration.AddJsonFile(installedConfig, optional: true, reloadOnChange: false);
 builder.Configuration.AddCommandLine(args);
@@ -46,6 +47,15 @@ builder.Services.AddSingleton<NodePaths>();
 builder.Services.AddSingleton<AdminAuth>();
 
 var dataDir = new NodePaths(builder.Configuration).DataDir;
+// Before anything opens the data folder: apply a restore queued from the backup page, and keep a
+// copy of the settings the first time a new version runs.
+var startupNotes = new List<string>();
+try
+{
+    if (BackupArchive.ApplyPending(dataDir, AppMode.Version) is { } restore) startupNotes.Add(restore.Message);
+    if (BackupArchive.SnapshotIfVersionChanged(dataDir, AppMode.Version) is { } snap) startupNotes.Add($"Saved settings from the previous version as {Path.GetFileName(snap)}.");
+}
+catch (Exception ex) { startupNotes.Add("Start-up backup step failed: " + ex.Message); }
 // Cookie-signing keys, encrypted with DPAPI (machine scope, so the service and signed-in users can both read them).
 builder.Services.AddDataProtection().PersistKeysToFileSystem(new DirectoryInfo(Path.Combine(dataDir, "keys")))
     .ProtectKeysWithDpapi(protectToLocalMachine: true).SetApplicationName("RtaApp");
@@ -60,6 +70,7 @@ builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationSc
     o.Events.OnRedirectToAccessDenied = ctx => { ctx.Response.StatusCode = 403; return Task.CompletedTask; };
 });
 builder.Services.AddAuthorization();
+builder.Services.AddHostedService<DailyBackupService>();
 
 if (mode.RunsNode)
 {
@@ -129,6 +140,7 @@ app.MapGet("/api/app", () => new
     dataDir,
 });
 app.MapAuthEndpoints();
+app.MapBackupEndpoints(mode, builder.Configuration);
 app.MapNdiEndpoints(mode);
 if (mode.RunsNode) app.MapNodeEndpoints();
 if (mode.RunsHub)
@@ -150,4 +162,9 @@ if (mode.RunsHub)
     });
 
 app.Logger.LogInformation("RTA app {Version} running as {Role} on {Urls} (data: {DataDir})", AppMode.Version, mode.Role, urls, dataDir);
+foreach (var note in startupNotes) app.Logger.LogWarning("{Note}", note);
+app.Lifetime.ApplicationStarted.Register(() =>
+{
+    foreach (var note in Rta.Core.SafeFile.Notes) app.Logger.LogWarning("Settings file recovered: {Note}", note);
+});
 app.Run();

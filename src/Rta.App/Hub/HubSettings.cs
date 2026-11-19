@@ -1,3 +1,4 @@
+using Rta.Core;
 using System.Text.Json;
 using Rta.App.Hub.Integrations;
 using Rta.App.Ndi;
@@ -50,8 +51,7 @@ public sealed class HubSettingsStore
     {
         _file = Path.Combine(paths.DataDir, "hub.json");
         HubSettings s;
-        try { s = File.Exists(_file) ? JsonSerializer.Deserialize<HubSettings>(File.ReadAllText(_file), CalibrationStore.Json) ?? new() : new(); }
-        catch (JsonException) { s = new(); }
+        s = SafeFile.ReadJson<HubSettings>(_file, CalibrationStore.Json) ?? new();
         if (string.IsNullOrWhiteSpace(s.HubId)) s = s with { HubId = Guid.NewGuid().ToString("N") };
         _current = s;
         Save(s);
@@ -69,9 +69,7 @@ public sealed class HubSettingsStore
             // Give new rules ids.
             var next = s.AlertRules.Count == 0 ? 1 : s.AlertRules.Max(r => r.Id) + 1;
             s = s with { AlertRules = s.AlertRules.Select(r => r.Id > 0 ? r : r with { Id = next++ }).ToList() };
-            var tmp = _file + ".tmp";
-            File.WriteAllText(tmp, JsonSerializer.Serialize(s, CalibrationStore.Json));
-            File.Move(tmp, _file, overwrite: true);
+            SafeFile.WriteJson(_file, s, CalibrationStore.Json);
             _current = s;
             return s;
         }

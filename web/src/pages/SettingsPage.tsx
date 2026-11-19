@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api';
 import { useApp } from '../App';
+import { BackupPanel } from '../components/BackupPanel';
 import { Empty } from '../components/common';
 import { useFetch } from '../hooks';
 import type { HubSettings } from '../types';
@@ -36,6 +37,7 @@ export function SettingsPage() {
         <div className="actions"><span className="muted">{msg}</span><button className="primary" onClick={save}>Save</button></div>
       </section>
       <PasswordSection />
+      <BackupPanel />
       <section className="panel">
         <h3>About</h3>
         <p className="muted small">Hub id {form.hubId}. Each node’s audio, inputs and calibration are set on that node’s own page (<a href="/node/">this PC’s node page</a>).</p>

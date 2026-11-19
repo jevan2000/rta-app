@@ -312,6 +312,7 @@ let draftConfig = null;
 
 async function openSettings() {
   $('settings').showModal();
+  loadBackups();
   $('sMsg').textContent = 'Loading devices…';
   [draftConfig, profiles] = await Promise.all([api('/config'), api('/calibration/profiles')]);
   devices = await api('/devices');
@@ -658,3 +659,57 @@ $('cManual').onclick = manualProfile;
 $('detail').addEventListener('close', () => { detailChannel = null; });
 
 connect();
+
+// ---------- backup & restore ----------
+
+async function loadBackups() {
+  try {
+    const b = await api('/backup');
+    const notes = [...b.notes.map((n) => `<p class="warn">${esc(n)}</p>`)];
+    if (b.lastRestore) notes.push(`<p class="${b.lastRestore.ok ? 'muted' : 'warn'}">Last restore (${esc(new Date(b.lastRestore.at).toLocaleString())}): ${esc(b.lastRestore.message)}</p>`);
+    if (b.restorePending) notes.push('<p class="warn">A restore is waiting for RTA to restart.</p>');
+    $('bNotes').innerHTML = notes.join('');
+    const kind = (n) => n.startsWith('daily-') ? 'Daily' : n.startsWith('before-update-') ? 'Before update' : n.startsWith('before-restore-') ? 'Before restore' : 'Backup';
+    $('bList').innerHTML = b.backups.length === 0 ? '' : `<p class="muted">Automatic backups (daily, before updates and before restores) in ${esc(b.folder)}:</p>
+      <table class="profiles"><tbody>${b.backups.slice(0, 5).map((f) => `<tr><td>${esc(new Date(f.created * 1000).toLocaleString())}</td><td>${kind(f.name)}</td>
+      <td style="text-align:right"><button data-restore="${esc(f.name)}">Restore…</button></td></tr>`).join('')}</tbody></table>`;
+    for (const btn of $('bList').querySelectorAll('[data-restore]'))
+      btn.onclick = async () => { try { await restorePreview(await api(`/backup/files/${encodeURIComponent(btn.dataset.restore)}/preview`)); } catch (e) { $('bMsg').textContent = e.message; } };
+  } catch (e) { $('bNotes').innerHTML = `<p class="warn">${esc(e.message)}</p>`; }
+}
+
+async function isAdmin() {
+  const st = await (await fetch('/api/auth/status')).json();
+  return st.canEdit || await signIn();
+}
+
+async function restorePreview(p) {
+  const m = p.manifest;
+  const parts = p.sections.filter((s) => s.applies && s.id !== 'history');
+  if (parts.length === 0) { $('bMsg').textContent = 'Nothing in this backup applies to this PC.'; return; }
+  const what = parts.map((s) => '• ' + s.label).join('\n');
+  if (!confirm(`Restore from ${m.machine}, ${new Date(m.created).toLocaleString()} (version ${m.appVersion})?\n\n${what}\n\nA backup of the current settings is saved first, and RTA restarts.`)) return;
+  const takeOver = !p.samePc && confirm(`Is this PC replacing ${m.machine}?\n\nOK: take over its identity, so its mics, zones and history line up.\nCancel: just copy the settings onto this PC.`);
+  const r = await api('/backup/restore', { method: 'POST', body: JSON.stringify({ sections: parts.map((s) => s.id), takeOverIdentity: takeOver, file: p.file }) });
+  $('bMsg').textContent = r.message;
+  if (!r.restarting) return;
+  await new Promise((res) => setTimeout(res, 3000));
+  for (let i = 0; i < 30; i++) {
+    try { if ((await fetch('/api/backup', { cache: 'no-store' })).ok) { location.reload(); return; } } catch { /* restarting */ }
+    await new Promise((res) => setTimeout(res, 1500));
+  }
+  $('bMsg').textContent = 'RTA hasn’t come back yet. Restart it from the tray icon (or restart the PC) to finish restoring.';
+}
+
+$('bDownload').onclick = async () => { if (await isAdmin()) location.href = '/api/backup/export'; };
+$('bFile').onchange = async (e) => {
+  const file = e.target.files[0];
+  e.target.value = '';
+  if (!file || !(await isAdmin())) return;
+  $('bMsg').textContent = 'Reading…';
+  try {
+    const p = await api('/backup/upload', { method: 'POST', body: file, raw: true, headers: { 'Content-Type': 'application/octet-stream' } });
+    $('bMsg').textContent = '';
+    await restorePreview(p);
+  } catch (err) { $('bMsg').textContent = err.message; }
+};

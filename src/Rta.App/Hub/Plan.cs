@@ -1,3 +1,4 @@
+using Rta.Core;
 using System.Text.Json;
 using Rta.App.Node;
 using Rta.Core.Calibration;
@@ -70,8 +71,7 @@ public sealed class PlanStore
         _file = Path.Combine(paths.DataDir, "plan.json");
         _imageDir = Path.Combine(paths.DataDir, "plan-images");
         Directory.CreateDirectory(_imageDir);
-        try { _plan = File.Exists(_file) ? JsonSerializer.Deserialize<Plan>(File.ReadAllText(_file), CalibrationStore.Json) ?? new() : new(); }
-        catch (JsonException) { _plan = new(); }
+        _plan = SafeFile.ReadJson<Plan>(_file, CalibrationStore.Json) ?? new();
     }
 
     public Plan Current { get { lock (_lock) return _plan; } }
@@ -91,9 +91,7 @@ public sealed class PlanStore
                     Zones = f.Zones.Select(z => z.Id > 0 && seen.Add(z.Id) ? z : z with { Id = next++ }).ToList(),
                 }).ToList(),
             };
-            var tmp = _file + ".tmp";
-            File.WriteAllText(tmp, JsonSerializer.Serialize(plan, CalibrationStore.Json));
-            File.Move(tmp, _file, overwrite: true);
+            SafeFile.WriteJson(_file, plan, CalibrationStore.Json);
             _plan = plan;
         }
         Changed?.Invoke();
