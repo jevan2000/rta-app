@@ -6,6 +6,8 @@ const FLOOR = -150; // anything below is "no signal"
 const fmt = (v, d = 1) => (v == null || v < FLOOR) ? '—' : v.toFixed(d);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+/** Input number as shown: "3" on the first interface, "2·3" on the second (channel = slot·100 + n). */
+const inLabel = (ch) => ch < 100 ? String(ch + 1) : `${Math.floor(ch / 100) + 1}·${(ch % 100) + 1}`;
 
 async function api(path, opts = {}, retried = false) {
   const res = await fetch('/api' + path, {
@@ -326,26 +328,87 @@ async function openSettings() {
   $('sHubAddr').value = draftConfig.hubAddress ?? '';
   onHubModeChange();
   for (const k of ['warnC', 'alarmC', 'warnA', 'alarmA']) $('t' + k[0].toUpperCase() + k.slice(1)).value = draftConfig.thresholds[k];
-  $('sDevice').innerHTML = devices.map((d, i) =>
-    `<option value="${i}">${esc(d.backend === 'TestSignal' ? d.name : `${d.backend} · ${d.name}`)}${d.inputChannels ? ` (${d.inputChannels} in)` : ''}</option>`).join('');
-  const cur = devices.findIndex((d) => d.backend === draftConfig.backend && d.id === draftConfig.deviceId);
-  $('sDevice').value = String(Math.max(cur, 0));
-  onDeviceChange(cur < 0);
+  draftDevices = (draftConfig.devices?.length ? draftConfig.devices : [{ slot: 0, backend: draftConfig.backend, deviceId: draftConfig.deviceId }])
+    .map((d) => ({ ...d }));
+  draftInputs = new Map(draftConfig.inputs.map((ic) => [ic.channelIndex, ic]));
+  renderDevices();
 }
 
-function onDeviceChange(changed = true) {
-  const d = devices[+$('sDevice').value];
-  if (!d) return;
-  const rates = d.sampleRates.length ? d.sampleRates : [48000];
-  $('sRate').innerHTML = rates.map((r) => `<option value="${r}">${(r / 1000).toFixed(1)} kHz</option>`).join('');
-  $('sRate').value = String(rates.includes(draftConfig.sampleRate) ? draftConfig.sampleRate : rates.includes(48000) ? 48000 : rates[0]);
-  $('sDeviceNote').textContent = d.note ?? '';
+let draftDevices = [];
+let draftInputs = new Map();
+const devKey = (d) => `${d.backend}|${d.id ?? d.deviceId}`;
+const infoFor = (dd) => devices.find((d) => d.backend === dd.backend && d.id === dd.deviceId);
+const deviceLabel = (d) => d.backend === 'TestSignal' ? d.name : `${d.backend} · ${d.name}`;
+
+/** Interfaces list, sample rate and the inputs table, from draftDevices/draftInputs. */
+function renderDevices() {
+  $('sDevices').innerHTML = draftDevices.map((dd, n) => {
+    const known = infoFor(dd);
+    const opts = (known ? [] : [`<option value="${esc(dd.backend + '|' + dd.deviceId)}">${esc(dd.deviceId)} (not connected)</option>`])
+      .concat(devices.map((d) => `<option value="${esc(devKey(d))}" ${known === d ? 'selected' : ''}>${esc(deviceLabel(d))}${d.inputChannels ? ` (${d.inputChannels} in)` : ''}</option>`)).join('');
+    return `<div class="devrow" data-slot="${dd.slot}"><span class="slot">${n + 1}</span><select class="dSel">${opts}</select>
+      ${draftDevices.length > 1 ? '<button class="dDel" title="Stop using this interface">Remove</button>' : ''}</div>`;
+  }).join('');
+  for (const row of $('sDevices').querySelectorAll('.devrow')) {
+    const slot = +row.dataset.slot;
+    row.querySelector('.dSel').onchange = (e) => changeDevice(slot, e.target.value);
+    const del = row.querySelector('.dDel');
+    if (del) del.onclick = () => removeDevice(slot);
+  }
+  $('sAddDevice').hidden = draftDevices.length >= 10 || draftDevices.length >= devices.length;
+
+  // One sample rate for the node; offer what any chosen interface supports, flag the ones that don't.
+  const infos = draftDevices.map(infoFor).filter(Boolean);
+  const rates = [...new Set(infos.flatMap((d) => d.sampleRates.length ? d.sampleRates : [48000]))].sort((a, b) => a - b);
+  const cur = +$('sRate').value || draftConfig.sampleRate;
+  $('sRate').innerHTML = (rates.length ? rates : [48000]).map((r) => `<option value="${r}">${(r / 1000).toFixed(1)} kHz</option>`).join('');
+  $('sRate').value = String(rates.includes(cur) ? cur : rates.includes(48000) ? 48000 : rates[0] ?? 48000);
   onRateChange();
-  const sameDevice = d.backend === draftConfig.backend && d.id === draftConfig.deviceId;
-  const inputs = sameDevice && draftConfig.inputs.length ? draftConfig.inputs
-    : Array.from({ length: d.inputChannels }, (_, i) => ({ channelIndex: i, enabled: i < 8, name: `Mic ${i + 1}`, micLabel: '', profileId: null }));
-  renderInputs(inputs, d);
-  if (changed && !sameDevice) $('sMsg').textContent = 'New device: inputs reset.';
+  renderInputs();
+}
+
+function deviceNotes() {
+  const notes = draftDevices.map(infoFor).filter((d) => d?.note).map((d) => `${d.name}: ${d.note}`);
+  const rate = +$('sRate').value;
+  for (const d of draftDevices.map(infoFor).filter(Boolean))
+    if (d.sampleRates.length && !d.sampleRates.includes(rate)) notes.push(`${d.name} doesn't list ${(rate / 1000).toFixed(1)} kHz; choose a rate every interface supports (48 kHz usually is).`);
+  if (draftDevices.filter((d) => d.backend === 'Asio').length > 1)
+    notes.push('Only one interface can use ASIO. Choose the Windows audio (WASAPI) entry for the others.');
+  $('sDeviceNote').innerHTML = notes.map((n) => `<span class="${n.includes('ASIO.') || n.includes("doesn't list") ? 'warn' : ''}">${esc(n)}</span>`).join('<br>');
+}
+
+function changeDevice(slot, key) {
+  keepInputEdits();
+  const d = devices.find((x) => devKey(x) === key);
+  const dd = draftDevices.find((x) => x.slot === slot);
+  if (!d || !dd || (dd.backend === d.backend && dd.deviceId === d.id)) return;
+  if (draftDevices.some((x) => x.slot !== slot && x.backend === d.backend && x.deviceId === d.id)) { $('sMsg').textContent = 'That interface is already in the list.'; renderDevices(); return; }
+  dd.backend = d.backend; dd.deviceId = d.id;
+  for (const ch of [...draftInputs.keys()]) if (Math.floor(ch / 100) === slot) draftInputs.delete(ch); // inputs belonged to the old interface
+  $('sMsg').textContent = `Interface ${draftDevices.indexOf(dd) + 1} changed: its inputs were reset.`;
+  renderDevices();
+}
+
+function addDevice() {
+  keepInputEdits();
+  const used = new Set(draftDevices.map((d) => d.slot));
+  const slot = [...Array(10).keys()].find((n) => !used.has(n));
+  const hasAsio = draftDevices.some((d) => d.backend === 'Asio');
+  const free = devices.filter((d) => !draftDevices.some((x) => x.backend === d.backend && x.deviceId === d.id));
+  const pick = free.find((d) => d.backend === 'Wasapi') ?? free.find((d) => !(hasAsio && d.backend === 'Asio')) ?? free[0];
+  if (slot == null || !pick) return;
+  draftDevices.push({ slot, backend: pick.backend, deviceId: pick.id });
+  $('sMsg').textContent = 'Interface added. Choose it in the list, then name its inputs.';
+  renderDevices();
+}
+
+function removeDevice(slot) {
+  keepInputEdits();
+  const dd = draftDevices.find((x) => x.slot === slot);
+  if (!dd || !confirm(`Stop using ${infoFor(dd)?.name ?? dd.deviceId}? Its inputs are removed from this node (their logged history stays on the Hub).`)) return;
+  draftDevices = draftDevices.filter((x) => x.slot !== slot);
+  for (const ch of [...draftInputs.keys()]) if (Math.floor(ch / 100) === slot) draftInputs.delete(ch);
+  renderDevices();
 }
 
 async function loadNdiStatus() {
@@ -370,28 +433,48 @@ function onHubModeChange() {
 
 function onRateChange() { $('sRateWarn').hidden = +$('sRate').value <= 48000; }
 
-function renderInputs(inputs, device) {
-  $('sInputs').innerHTML = inputs.map((ic) => {
-    const opts = ['<option value="">— none (uncalibrated) —</option>'].concat(profiles.map((p) => {
-      const star = (p.micName && ic.micLabel && p.micName.trim().toLowerCase() === ic.micLabel.trim().toLowerCase()) || p.channelIndex === ic.channelIndex ? '★ ' : '';
-      return `<option value="${p.id}" ${p.id === ic.profileId ? 'selected' : ''}>${star}${esc(p.name)} (${p.offsetDb.toFixed(1)} dB)</option>`;
-    })).join('');
-    return `<tr data-ch="${ic.channelIndex}">
+/** Saves what's typed in the inputs table into draftInputs (before the table is redrawn). */
+function keepInputEdits() {
+  for (const ic of readInputs()) draftInputs.set(ic.channelIndex, ic);
+}
+
+function renderInputs() {
+  deviceNotes();
+  const rows = [];
+  draftDevices.forEach((dd, n) => {
+    const d = infoFor(dd);
+    const count = d?.inputChannels ?? Math.max(0, ...[...draftInputs.keys()].filter((ch) => Math.floor(ch / 100) === dd.slot).map((ch) => (ch % 100) + 1));
+    if (draftDevices.length > 1) rows.push(`<tr class="devhead"><td colspan="7">Interface ${n + 1}: ${esc(d ? deviceLabel(d) : dd.deviceId + ' (not connected)')}</td></tr>`);
+    for (let i = 0; i < count; i++) {
+      const ch = dd.slot * 100 + i;
+      const short = (d?.name ?? 'Input').split(/[ (,]/)[0];
+      const ic = draftInputs.get(ch) ?? { channelIndex: ch, enabled: i < 8, name: dd.slot === 0 ? `Mic ${i + 1}` : `${short} ${i + 1}`, micLabel: '', profileId: null };
+      rows.push(inputRow(ic, d?.channelNames?.[i] ?? ''));
+    }
+  });
+  $('sInputs').innerHTML = rows.join('');
+}
+
+function inputRow(ic, channelName) {
+  const opts = ['<option value="">— none (uncalibrated) —</option>'].concat(profiles.map((p) => {
+    const star = (p.micName && ic.micLabel && p.micName.trim().toLowerCase() === ic.micLabel.trim().toLowerCase()) || p.channelIndex === ic.channelIndex ? '★ ' : '';
+    return `<option value="${p.id}" ${p.id === ic.profileId ? 'selected' : ''}>${star}${esc(p.name)} (${p.offsetDb.toFixed(1)} dB)</option>`;
+  })).join('');
+  return `<tr data-ch="${ic.channelIndex}">
       <td><input type="checkbox" class="iOn" ${ic.enabled ? 'checked' : ''}></td>
-      <td>${ic.channelIndex + 1}<div class="muted" style="font-size:11px">${esc(device?.channelNames?.[ic.channelIndex] ?? '')}</div></td>
+      <td>${inLabel(ic.channelIndex)}<div class="muted" style="font-size:11px">${esc(channelName)}</div></td>
       <td><input class="iName" value="${esc(ic.name)}"></td>
       <td><input class="iMic" value="${esc(ic.micLabel ?? '')}" placeholder="e.g. dbx RTA-M #1"></td>
       <td><select class="iProf">${opts}</select></td>
       <td><input type="checkbox" class="iNdiA" ${ic.ndiAudio ? 'checked' : ''}></td>
       <td><input type="checkbox" class="iNdiM" ${ic.ndiMeter ? 'checked' : ''}></td></tr>`;
-  }).join('');
 }
 
 function readInputs() {
-  return [...$('sInputs').querySelectorAll('tr')].map((tr) => ({
+  return [...$('sInputs').querySelectorAll('tr[data-ch]')].map((tr) => ({
     channelIndex: +tr.dataset.ch,
     enabled: tr.querySelector('.iOn').checked,
-    name: tr.querySelector('.iName').value.trim() || `Mic ${+tr.dataset.ch + 1}`,
+    name: tr.querySelector('.iName').value.trim() || `Mic ${inLabel(+tr.dataset.ch)}`,
     micLabel: tr.querySelector('.iMic').value.trim() || null,
     profileId: tr.querySelector('.iProf').value || null,
     ndiAudio: tr.querySelector('.iNdiA').checked,
@@ -400,11 +483,11 @@ function readInputs() {
 }
 
 async function saveSettings() {
-  const d = devices[+$('sDevice').value];
+  const first = [...draftDevices].sort((a, b) => a.slot - b.slot)[0];
   const cfg = {
     ...draftConfig,
     nodeName: $('sName').value.trim() || draftConfig.nodeName,
-    backend: d.backend, deviceId: d.id, sampleRate: +$('sRate').value,
+    devices: draftDevices, backend: first.backend, deviceId: first.deviceId, sampleRate: +$('sRate').value,
     autoStart: $('sAuto').checked,
     hubConnection: $('sHubMode').value,
     ndiMeterFps: Math.min(30, Math.max(1, +$('sNdiFps').value || 10)),
@@ -415,6 +498,7 @@ async function saveSettings() {
   $('sMsg').textContent = 'Saving…';
   try {
     draftConfig = await api('/config', { method: 'PUT', body: JSON.stringify(cfg) });
+    draftInputs = new Map(draftConfig.inputs.map((ic) => [ic.channelIndex, ic]));
     $('sMsg').innerHTML = '<span class="ok-text">Saved.</span>';
   } catch (e) { $('sMsg').innerHTML = `<span class="warn">${esc(e.message)}</span>`; }
 }
@@ -439,7 +523,7 @@ async function openCalibration() {
   $('calibration').showModal();
   $('cResult').hidden = true;
   $('cMsg').textContent = '';
-  const opt = (c) => `<option value="${c.channelIndex}">${c.channelIndex + 1} · ${esc(c.name)}${c.micLabel ? ' · ' + esc(c.micLabel) : ''}</option>`;
+  const opt = (c) => `<option value="${c.channelIndex}">${inLabel(c.channelIndex)} · ${esc(c.name)}${c.micLabel ? ' · ' + esc(c.micLabel) : ''}</option>`;
   $('cInput').innerHTML = channels.map(opt).join('');
   if (detailChannel != null) $('cInput').value = String(detailChannel);
   refreshReferenceInputs();
@@ -451,7 +535,7 @@ function refreshReferenceInputs() {
   const target = +$('cInput').value;
   const refs = channels.filter((c) => c.profileId && c.channelIndex !== target);
   $('cRefInput').innerHTML = refs.length
-    ? refs.map((c) => `<option value="${c.channelIndex}">${c.channelIndex + 1} · ${esc(c.name)} — ${esc(c.profileName ?? '')} (${QUALITY_LABEL[c.profileQuality ?? 'Unknown']})</option>`).join('')
+    ? refs.map((c) => `<option value="${c.channelIndex}">${inLabel(c.channelIndex)} · ${esc(c.name)} — ${esc(c.profileName ?? '')} (${QUALITY_LABEL[c.profileQuality ?? 'Unknown']})</option>`).join('')
     : '<option value="">No other calibrated inputs yet</option>';
 }
 
@@ -525,7 +609,7 @@ function showResult() {
   $('rNotes').className = 'note-list' + (['Low', 'VeryLow'].includes(r.quality) ? ' rough' : '');
   const ch = channels.find((c) => c.channelIndex === req.channelIndex);
   $('pMic').value = ch?.micLabel ?? '';
-  $('pName').value = `${ch?.micLabel || ch?.name || 'Input ' + (req.channelIndex + 1)} · ${METHOD_LABEL[req.method]} · ${new Date().toLocaleDateString()}`;
+  $('pName').value = `${ch?.micLabel || ch?.name || 'Input ' + inLabel(req.channelIndex)} · ${METHOD_LABEL[req.method]} · ${new Date().toLocaleDateString()}`;
   curvePoints = null;
   $('pCurve').value = '';
   $('pMsg').textContent = '';
@@ -548,7 +632,7 @@ async function saveProfile() {
     sourceProfileName: source?.profileName ?? null,
     micName: $('pMic').value.trim() || null,
     micSerial: $('pSerial').value.trim() || null,
-    deviceName: status.deviceName || null,
+    deviceName: ch?.deviceName || status.deviceName || null,
     channelIndex: $('pBindCh').checked ? req.channelIndex : null,
     gainNote: $('pGain').value.trim() || null,
     sampleRate: status.sampleRate,
@@ -577,7 +661,7 @@ async function loadProfiles() {
       <td>${qualityBadge(p.quality, p.uncertaintyDb)}</td>
       <td>${esc(METHOD_LABEL[p.method] ?? p.method)}${p.referenceDescription ? `<div class="muted" style="font-size:11px">${esc(p.referenceDescription)}</div>` : ''}</td>
       <td>${esc(p.micName ?? '')}${p.micSerial ? ` <span class="muted">#${esc(p.micSerial)}</span>` : ''}</td>
-      <td>${p.channelIndex != null ? p.channelIndex + 1 : '<span class="muted">any</span>'}</td>
+      <td>${p.channelIndex != null ? inLabel(p.channelIndex) : '<span class="muted">any</span>'}</td>
       <td>${p.correction?.length ? `${p.correction.length} pts` : '—'}</td>
       <td>${new Date(p.createdUtc).toLocaleDateString()}</td>
       <td style="white-space:nowrap"><button type="button" data-edit="${p.id}">Edit</button>
@@ -647,8 +731,8 @@ $('btnSettings').onclick = openSettings;
 $('sHubMode').onchange = onHubModeChange;
 fetch('/api/app').then((r) => r.json()).then((a) => { $('lnkDash').hidden = !a.runsHub; }).catch(() => {});
 $('btnCal').onclick = openCalibration;
-$('sDevice').onchange = () => onDeviceChange(true);
-$('sRate').onchange = onRateChange;
+$('sAddDevice').onclick = addDevice;
+$('sRate').onchange = () => { onRateChange(); deviceNotes(); };
 $('sSave').onclick = saveSettings;
 $('cMethod').onchange = onMethodChange;
 $('cInput').onchange = () => { refreshReferenceInputs(); onMethodChange(); };

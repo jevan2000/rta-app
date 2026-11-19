@@ -9,6 +9,7 @@ public static class AudioDeviceCatalog
         foreach (var name in AsioInput.DriverNames()) list.Add(AsioInput.Describe(name));
         list.AddRange(WasapiInput.List());
         list.Add(TestSignalInput.Info);
+        list.Add(TestSignalInput.SecondInfo);
         return list;
     }
 }

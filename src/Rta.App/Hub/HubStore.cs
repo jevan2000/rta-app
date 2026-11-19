@@ -213,7 +213,7 @@ public sealed partial class HubStore : IDisposable
                     try { micId = MicIdLocked(MicKey(nodeId, r.ChannelIndex)); }
                     catch (KeyNotFoundException)
                     {
-                        UpsertMicLocked(nodeId, new MicInfo(r.ChannelIndex, $"Mic {r.ChannelIndex + 1}", null, null, r.Quality, null, r.Calibrated), Now());
+                        UpsertMicLocked(nodeId, new MicInfo(r.ChannelIndex, $"Mic {Rta.Core.InputNumber.Label(r.ChannelIndex)}", null, null, r.Quality, null, r.Calibrated), Now());
                         micId = MicIdLocked(MicKey(nodeId, r.ChannelIndex));
                     }
                     micIds[r.ChannelIndex] = micId;

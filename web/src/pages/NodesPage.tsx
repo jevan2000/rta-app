@@ -67,7 +67,7 @@ function NodeCard({ n, busy, act, micRows }: { n: NodeView; busy: boolean; act: 
               const m = mics.find((x) => x.key === r.key);
               return (
                 <tr key={r.key}>
-                  <td>{r.channelIndex + 1}</td>
+                  <td>{r.channelIndex < 100 ? r.channelIndex + 1 : `${Math.floor(r.channelIndex / 100) + 1}·${(r.channelIndex % 100) + 1}`}</td>
                   <td>{r.name}{r.micLabel ? <span className="muted"> · {r.micLabel}</span> : null}</td>
                   <td>
                     <input defaultValue={r.displayName ?? ''} placeholder={r.name}

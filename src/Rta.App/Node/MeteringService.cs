@@ -1,5 +1,6 @@
 using System.Threading.Channels;
 using Rta.Audio;
+using Rta.Core;
 using Rta.Core.Calibration;
 using Rta.Core.Dsp;
 using Rta.Core.Logging;
@@ -10,6 +11,8 @@ namespace Rta.App.Node;
 
 public sealed record ChannelStatus(
     int ChannelIndex,
+    string Label,
+    string? DeviceName,
     string Name,
     string? MicLabel,
     string? ProfileId,
@@ -19,6 +22,12 @@ public sealed record ChannelStatus(
     IReadOnlyList<string> Warnings,
     LevelSnapshot? Levels);
 
+public sealed record DeviceStatus(int Slot, AudioBackend Backend, string DeviceId, string DeviceName, bool Running, string? Error, int Channels, long DroppedBuffers);
+
+/// <summary>
+/// Node status. Running: at least one interface is metering; Error: the interfaces that failed (or why
+/// nothing runs). DeviceName/Backend/DeviceChannels summarise all interfaces for older consumers.
+/// </summary>
 public sealed record NodeStatus(
     string NodeName,
     bool Running,
@@ -30,11 +39,14 @@ public sealed record NodeStatus(
     long DroppedBuffers,
     IReadOnlyList<string> Warnings,
     IReadOnlyList<double> BandsHz,
-    Thresholds Thresholds);
+    Thresholds Thresholds,
+    IReadOnlyList<DeviceStatus> Devices);
 
 /// <summary>
-/// Owns the audio input and per-channel meters. Audio callbacks copy buffers onto a queue; a
-/// single worker thread runs the DSP so the driver thread never blocks.
+/// Owns the audio interfaces and per-channel meters. Each interface runs on its own: its audio
+/// callback copies buffers onto its queue and its own worker thread runs the DSP, so the driver
+/// thread never blocks and one interface failing (or being unplugged) doesn't stop the others.
+/// Interfaces have independent clocks, which is fine: every channel is metered on its own.
 /// </summary>
 public sealed class MeteringService(NodeConfigStore configStore, CalibrationStore calibration, ILogger<MeteringService> log) : IHostedService
 {
@@ -83,8 +95,8 @@ public sealed class MeteringService(NodeConfigStore configStore, CalibrationStor
         }
     }
 
-    /// <summary>Every raw interleaved buffer (fired on the metering thread; handlers must be quick).</summary>
-    public event Action<float[], int, double>? RawAudio;
+    /// <summary>Every raw interleaved buffer: device slot, samples, channel count, rate (fired on that device's metering thread; handlers must be quick).</summary>
+    public event Action<int, float[], int, double>? RawAudio;
 
     /// <summary>Per-second and per-minute records for logging (fired on the metering thread).</summary>
     public event Action<LevelRecord>? RecordReady;
@@ -98,14 +110,23 @@ public sealed class MeteringService(NodeConfigStore configStore, CalibrationStor
         public TaskCompletionSource<List<MeterBlock>> Done { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     }
 
+    /// <summary>One audio interface while running (or the reason it isn't).</summary>
+    private sealed class DeviceRun(DeviceConfig config)
+    {
+        public DeviceConfig Config { get; } = config;
+        public IAudioInput? Input;
+        public Channel<float[]>? Queue;
+        public Task? Worker;
+        public int Channels;
+        public string? Error;
+        public long Dropped;
+        public Dictionary<int, Pipeline> Pipelines = [];
+    }
+
     private readonly object _lock = new();
-    private IAudioInput? _input;
-    private Channel<float[]>? _queue;
-    private Task? _worker;
-    private int _queueChannels;
+    private List<DeviceRun> _devices = [];
     private Dictionary<int, Pipeline> _pipelines = [];
     private string? _error;
-    private long _dropped;
     private readonly List<string> _runtimeWarnings = [];
 
     public NodeConfig Config { get; private set; } = configStore.Load();
@@ -122,65 +143,90 @@ public sealed class MeteringService(NodeConfigStore configStore, CalibrationStor
 
     public Task StopAsync(CancellationToken ct) { Stop(); return Task.CompletedTask; }
 
+    /// <summary>(Re)starts every configured interface. Throws only if none of them could start.</summary>
     public void Start()
     {
         lock (_lock)
         {
             StopLocked();
             _error = null;
-            _dropped = 0;
-            _runtimeWarnings.Clear();
+            lock (_runtimeWarnings) _runtimeWarnings.Clear();
             var cfg = Config;
-            IAudioInput input;
-            try
+            var runs = new List<DeviceRun>();
+            foreach (var dc in cfg.Devices)
             {
-                input = AudioInputFactory.Create(cfg.Backend, cfg.DeviceId, cfg.SampleRate);
-                input.Faulted += msg => { lock (_runtimeWarnings) if (!_runtimeWarnings.Contains(msg)) _runtimeWarnings.Add(msg); log.LogWarning("Audio: {Message}", msg); };
-                input.SamplesAvailable += OnSamples;
-                _queue = Channel.CreateBounded<float[]>(new BoundedChannelOptions(200)
+                var run = new DeviceRun(dc);
+                runs.Add(run);
+                try
                 {
-                    FullMode = BoundedChannelFullMode.DropWrite, SingleReader = true, SingleWriter = true,
-                });
-                input.Start();
-            }
-            catch (Exception ex)
-            {
-                _error = $"Could not start {cfg.Backend} device: {ex.Message}";
-                throw new InvalidOperationException(_error, ex);
-            }
-
-            _input = input;
-            _queueChannels = input.ChannelCount;
-
-            // First run on a device: create an input entry per channel (up to 8 enabled).
-            if (cfg.Inputs.Count == 0)
-            {
-                cfg = cfg with
+                    var input = AudioInputFactory.Create(dc.Backend, dc.DeviceId, cfg.SampleRate);
+                    input.Faulted += msg => { lock (_runtimeWarnings) if (!_runtimeWarnings.Contains(msg)) _runtimeWarnings.Add(msg); log.LogWarning("Audio: {Message}", msg); };
+                    var queue = Channel.CreateBounded<float[]>(new BoundedChannelOptions(200)
+                    {
+                        FullMode = BoundedChannelFullMode.DropWrite, SingleReader = true, SingleWriter = true,
+                    });
+                    input.SamplesAvailable += (data, _) => { if (!queue.Writer.TryWrite(data.ToArray())) Interlocked.Increment(ref run.Dropped); };
+                    run.Queue = queue;
+                    run.Input = input;
+                    input.Start();
+                    run.Channels = input.ChannelCount;
+                }
+                catch (Exception ex)
                 {
-                    Inputs = Enumerable.Range(0, input.ChannelCount)
-                        .Select(i => new InputConfig { ChannelIndex = i, Name = $"Mic {i + 1}", Enabled = i < 8 })
-                        .ToList(),
-                };
+                    run.Error = $"Could not start {DeviceLabel(dc)}: {ex.Message}";
+                    log.LogError(ex, "Audio start failed for {Device}", DeviceLabel(dc));
+                    try { run.Input?.Dispose(); } catch { /* already failing */ }
+                    run.Input = null;
+                    run.Queue?.Writer.TryComplete();
+                    run.Queue = null;
+                }
+            }
+            _devices = runs;
+
+            // First run on an interface: create an input entry per channel (up to 8 enabled per interface).
+            var added = runs.Where(r => r.Input is not null && !cfg.Inputs.Any(i => InputNumber.Slot(i.ChannelIndex) == r.Config.Slot))
+                .SelectMany(r => Enumerable.Range(0, Math.Min(r.Channels, InputNumber.PerDevice)).Select(i => new InputConfig
+                {
+                    ChannelIndex = InputNumber.Of(r.Config.Slot, i),
+                    Name = r.Config.Slot == 0 ? $"Mic {i + 1}" : $"{ShortName(r.Input!.DeviceName)} {i + 1}",
+                    Enabled = i < 8,
+                })).ToList();
+            if (added.Count > 0)
+            {
+                cfg = cfg with { Inputs = [.. cfg.Inputs, .. added] };
                 Config = cfg;
                 configStore.Save(cfg);
             }
 
-            var pipelines = new Dictionary<int, Pipeline>();
-            foreach (var ic in cfg.Inputs.Where(i => i.Enabled && i.ChannelIndex < input.ChannelCount))
+            var all = new Dictionary<int, Pipeline>();
+            foreach (var run in runs.Where(r => r.Input is not null))
             {
-                var meter = new ChannelMeter(input.SampleRate);
-                var agg = new LevelAggregator(meter.Bands);
-                var p = new Pipeline(ic, meter, agg);
-                p.Records = new RecordBuilder(ic.ChannelIndex, meter.Bands, () => ProfileFor(p.Config));
-                p.Records.RecordReady += r => RecordReady?.Invoke(r);
-                meter.BlockReady += b => OnBlock(p, b);
-                pipelines[ic.ChannelIndex] = p;
+                var input = run.Input!;
+                foreach (var ic in cfg.Inputs.Where(i => i.Enabled && InputNumber.Slot(i.ChannelIndex) == run.Config.Slot
+                                                          && InputNumber.DeviceChannel(i.ChannelIndex) < input.ChannelCount))
+                {
+                    var meter = new ChannelMeter(input.SampleRate);
+                    var agg = new LevelAggregator(meter.Bands);
+                    var p = new Pipeline(ic, meter, agg);
+                    p.Records = new RecordBuilder(ic.ChannelIndex, meter.Bands, () => ProfileFor(p.Config));
+                    p.Records.RecordReady += r => RecordReady?.Invoke(r);
+                    meter.BlockReady += b => OnBlock(p, b);
+                    run.Pipelines[ic.ChannelIndex] = p;
+                    all[ic.ChannelIndex] = p;
+                }
+                var queue = run.Queue!;
+                var current = run;
+                run.Worker = Task.Factory.StartNew(() => Work(current, queue), TaskCreationOptions.LongRunning).Unwrap();
+                log.LogInformation("Metering {Count} channel(s) on {Device} at {Rate} Hz", run.Pipelines.Count, input.DeviceName, input.SampleRate);
             }
-            _pipelines = pipelines;
+            _pipelines = all;
 
-            var queue = _queue!;
-            _worker = Task.Factory.StartNew(() => Work(queue), TaskCreationOptions.LongRunning);
-            log.LogInformation("Metering {Count} channel(s) on {Device} at {Rate} Hz", pipelines.Count, input.DeviceName, input.SampleRate);
+            var failed = runs.Where(r => r.Error is not null).ToList();
+            if (failed.Count == runs.Count)
+            {
+                _error = string.Join(" ", failed.Select(f => f.Error));
+                throw new InvalidOperationException(_error);
+            }
         }
     }
 
@@ -191,45 +237,55 @@ public sealed class MeteringService(NodeConfigStore configStore, CalibrationStor
 
     private void StopLocked()
     {
-        _input?.Dispose();
-        _input = null;
-        _queue?.Writer.TryComplete();
-        try { _worker?.Wait(TimeSpan.FromSeconds(2)); } catch { /* worker faulted; already logged */ }
-        _worker = null;
-        _queue = null;
+        foreach (var run in _devices)
+        {
+            run.Input?.Dispose();
+            run.Input = null;
+            run.Queue?.Writer.TryComplete();
+            try { run.Worker?.Wait(TimeSpan.FromSeconds(2)); } catch { /* worker faulted; already logged */ }
+            run.Worker = null;
+            run.Queue = null;
+        }
         foreach (var p in _pipelines.Values)
         {
             try { p.Records?.Flush(); } catch (Exception ex) { log.LogWarning(ex, "Flushing records failed"); }
             lock (p.Taps) foreach (var t in p.Taps) t.Done.TrySetCanceled();
         }
+        _devices = [];
+        _pipelines = [];
     }
 
-    private void OnSamples(ReadOnlySpan<float> interleaved, int channels)
+    private async Task Work(DeviceRun run, Channel<float[]> queue)
     {
-        var q = _queue;
-        if (q is null) return;
-        if (!q.Writer.TryWrite(interleaved.ToArray())) Interlocked.Increment(ref _dropped);
-    }
-
-    private async Task Work(Channel<float[]> queue)
-    {
+        var stride = run.Channels;
+        var rate = run.Input?.SampleRate ?? Config.SampleRate;
+        var pipelines = run.Pipelines.Values.ToList();
         try
         {
             await foreach (var buf in queue.Reader.ReadAllAsync())
             {
-                var pipelines = _pipelines;
-                var stride = _queueChannels;
-                foreach (var p in pipelines.Values)
-                    p.Meter.ProcessInterleaved(buf, p.Config.ChannelIndex, stride);
-                try { RawAudio?.Invoke(buf, stride, _input?.SampleRate ?? Config.SampleRate); }
+                foreach (var p in pipelines)
+                    p.Meter.ProcessInterleaved(buf, InputNumber.DeviceChannel(p.Config.ChannelIndex), stride);
+                try { RawAudio?.Invoke(run.Config.Slot, buf, stride, rate); }
                 catch (Exception ex) { log.LogWarning(ex, "Raw audio consumer failed"); }
             }
         }
         catch (Exception ex)
         {
-            _error = "Metering stopped: " + ex.Message;
-            log.LogError(ex, "Metering worker failed");
+            run.Error = "Metering stopped: " + ex.Message;
+            log.LogError(ex, "Metering worker failed for {Device}", DeviceLabel(run.Config));
         }
+    }
+
+    private static string DeviceLabel(DeviceConfig d) =>
+        d.Backend == AudioBackend.TestSignal ? "the test signal" : $"{d.Backend} device '{d.DeviceId}'";
+
+    /// <summary>A short name for default input names, e.g. "Behringer UMC404HD" gives "Behringer".</summary>
+    private static string ShortName(string deviceName)
+    {
+        var name = deviceName.Split(['(', ','], 2)[0].Trim();
+        var first = name.Split(' ', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault() ?? "Input";
+        return first.Length >= 3 ? first : name;
     }
 
     private CalibrationProfile? ProfileFor(InputConfig ic) => ic.ProfileId is null ? null : calibration.Get(ic.ProfileId);
@@ -261,23 +317,29 @@ public sealed class MeteringService(NodeConfigStore configStore, CalibrationStor
         if (!NodeConfig.AllowedSampleRates.Contains(next.SampleRate))
             throw new ArgumentException($"Sample rate must be one of {string.Join(", ", NodeConfig.AllowedSampleRates)}.");
         var prev = Config;
-        next = next with { NodeId = prev.NodeId }; // identity is never changed from the UI
-        var deviceChanged = next.Backend != prev.Backend || next.DeviceId != prev.DeviceId || next.SampleRate != prev.SampleRate;
+        // Identity is never changed from the UI. A page from 1.0.x sends only Backend/DeviceId: that is device 0.
+        next = (next.Devices.Count == 0 ? next with { Devices = [new DeviceConfig { Slot = 0, Backend = next.Backend, DeviceId = next.DeviceId }] } : next)
+            .Normalized() with { NodeId = prev.NodeId };
+        if (next.DeviceProblem() is { } problem) throw new ArgumentException(problem);
+        var deviceChanged = next.SampleRate != prev.SampleRate || !next.Devices.SequenceEqual(prev.Devices);
         configStore.Save(next);
         Config = next;
 
+        bool running;
         lock (_lock)
         {
+            running = _devices.Any(d => d.Input is not null);
             // Names, mic labels, profiles and thresholds apply live without losing Leq history.
             var enabledNow = next.Inputs.Where(i => i.Enabled).Select(i => i.ChannelIndex).Order().ToList();
-            var running = _pipelines.Keys.Order().ToList();
-            if (_input is not null && !deviceChanged && enabledNow.SequenceEqual(running))
+            var metering = _pipelines.Keys.Order().ToList();
+            var allUp = _devices.Count > 0 && _devices.All(d => d.Input is not null);
+            if (allUp && !deviceChanged && enabledNow.SequenceEqual(metering))
             {
                 foreach (var ic in next.Inputs.Where(i => i.Enabled)) _pipelines[ic.ChannelIndex].Config = ic;
                 return;
             }
         }
-        if (_input is not null || deviceChanged || next.AutoStart) Start();
+        if (running || deviceChanged || next.AutoStart) Start();
     }
 
     public void ResetSession()
@@ -321,47 +383,57 @@ public sealed class MeteringService(NodeConfigStore configStore, CalibrationStor
 
     public NodeStatus Status()
     {
-        var input = _input;
+        var devices = _devices;
+        var up = devices.Where(d => d.Input is not null).ToList();
+        var dropped = devices.Sum(d => Interlocked.Read(ref d.Dropped));
         var bands = _pipelines.Values.FirstOrDefault()?.Meter.Bands.Select(b => b.NominalHz).ToList()
                     ?? new ThirdOctaveBank(Config.SampleRate).Bands.Select(b => b.NominalHz).ToList();
         var warnings = new List<string>();
         lock (_runtimeWarnings) warnings.AddRange(_runtimeWarnings);
         if (Config.SampleRate > 48000)
             warnings.Add($"{Config.SampleRate / 1000.0:0.#} kHz uses about twice the CPU and network of 48 kHz. 48 kHz is enough for SPL metering.");
-        if (_dropped > 0)
-            warnings.Add($"{_dropped} audio buffers dropped — the PC could not keep up; levels may be slightly low.");
-        var missing = Config.Inputs.Where(i => i.Enabled && input is not null && i.ChannelIndex >= input.ChannelCount).ToList();
-        if (missing.Count > 0)
-            warnings.Add($"Device has only {input!.ChannelCount} inputs; {missing.Count} configured input(s) ignored.");
-        if (_pipelines.Count > 8)
-            warnings.Add($"{_pipelines.Count} inputs on one node. Above ~8 inputs, CPU and (in later phases) network load grow quickly.");
+        foreach (var d in devices.Where(d => d.Dropped > 0))
+            warnings.Add($"{d.Dropped} audio buffers dropped on {d.Input?.DeviceName ?? d.Config.DeviceId}: the PC could not keep up; levels may be slightly low.");
+        foreach (var d in up)
+        {
+            var missing = Config.Inputs.Count(i => i.Enabled && InputNumber.Slot(i.ChannelIndex) == d.Config.Slot && InputNumber.DeviceChannel(i.ChannelIndex) >= d.Channels);
+            if (missing > 0) warnings.Add($"{d.Input!.DeviceName} has only {d.Channels} inputs; {missing} configured input(s) ignored.");
+        }
+        if (_pipelines.Count > 16)
+            warnings.Add($"{_pipelines.Count} inputs on one node. Above ~16 inputs, CPU and network load grow quickly.");
 
-        return new NodeStatus(Config.NodeName, input is not null && _error is null, _error, Config.Backend,
-            input?.DeviceName ?? "", input?.SampleRate ?? Config.SampleRate, input?.ChannelCount ?? 0,
-            _dropped, warnings, bands, Config.Thresholds);
+        // Running if anything meters; the error names whatever didn't start (or why nothing runs).
+        var errors = devices.Where(d => d.Error is not null).Select(d => d.Error!).ToList();
+        var error = up.Count == 0 ? _error ?? (errors.Count > 0 ? string.Join(" ", errors) : null) : errors.Count > 0 ? string.Join(" ", errors) : null;
+        var statuses = devices.Select(d => new DeviceStatus(d.Config.Slot, d.Config.Backend, d.Config.DeviceId, d.Input?.DeviceName ?? d.Config.DeviceId,
+            d.Input is not null && d.Error is null, d.Error, d.Channels, d.Dropped)).ToList();
+        return new NodeStatus(Config.NodeName, up.Count > 0, error, up.FirstOrDefault()?.Config.Backend ?? Config.Backend,
+            string.Join(" + ", up.Select(d => d.Input!.DeviceName)), up.FirstOrDefault()?.Input!.SampleRate ?? Config.SampleRate,
+            up.Sum(d => d.Channels), dropped, warnings, bands, Config.Thresholds, statuses);
     }
 
     public IReadOnlyList<ChannelStatus> Channels()
     {
         var profiles = calibration.List().ToDictionary(p => p.Id);
-        var input = _input;
+        var inputs = _devices.Where(d => d.Input is not null).ToDictionary(d => d.Config.Slot, d => d.Input!);
         var list = new List<ChannelStatus>();
         foreach (var p in _pipelines.Values.OrderBy(p => p.Config.ChannelIndex))
         {
             var ic = p.Config;
             var profile = ic.ProfileId is not null && profiles.TryGetValue(ic.ProfileId, out var pr) ? pr : null;
+            var input = inputs.GetValueOrDefault(InputNumber.Slot(ic.ChannelIndex));
             var warnings = CalibrationChecks.Warnings(profile,
                 new InputContext(input?.DeviceName, ic.ChannelIndex, ic.MicLabel, input?.SampleRate ?? 0)).ToList();
             if (ic.ProfileId is not null && profile is null) warnings.Insert(0, "Assigned calibration profile no longer exists.");
             var snap = p.Aggregator.Snapshot(profile);
             if (snap?.ClippedRecently == true) warnings.Insert(0, "Input is clipping — turn the preamp gain down (and recalibrate).");
-            list.Add(new ChannelStatus(ic.ChannelIndex, ic.Name, ic.MicLabel, ic.ProfileId, profile?.Name,
+            list.Add(new ChannelStatus(ic.ChannelIndex, InputNumber.Label(ic.ChannelIndex), input?.DeviceName, ic.Name, ic.MicLabel, ic.ProfileId, profile?.Name,
                 profile?.Quality, profile?.UncertaintyDb, warnings, snap));
         }
         return list;
     }
 
-    public bool IsRunning => _input is not null && _error is null;
+    public bool IsRunning => _devices.Any(d => d.Input is not null && d.Error is null);
 
     public IReadOnlyList<MicInfo> MicInfos() => Channels()
         .Select(c => new MicInfo(c.ChannelIndex, c.Name, c.MicLabel, c.ProfileName, c.ProfileQuality, c.ProfileUncertaintyDb,
@@ -397,10 +469,11 @@ public sealed class MeteringService(NodeConfigStore configStore, CalibrationStor
     public IReadOnlyList<AudioDeviceInfo> Devices()
     {
         var list = new List<AudioDeviceInfo>();
-        var input = _input;
+        var input = _devices.Select(d => d.Input).OfType<AsioInput>().FirstOrDefault();
+        var asioInUse = _devices.FirstOrDefault(d => d.Input is AsioInput)?.Config.DeviceId;
         foreach (var name in AsioInput.DriverNames())
         {
-            if (input is AsioInput && Config.Backend == AudioBackend.Asio && Config.DeviceId == name)
+            if (input is not null && asioInUse == name)
                 list.Add(new AudioDeviceInfo(AudioBackend.Asio, name, name, input.ChannelCount,
                     Enumerable.Range(1, input.ChannelCount).Select(i => $"Input {i}").ToList(),
                     [(int)input.SampleRate], "In use by this app; stop audio to see all rates."));
@@ -408,6 +481,7 @@ public sealed class MeteringService(NodeConfigStore configStore, CalibrationStor
         }
         list.AddRange(WasapiInput.List());
         list.Add(TestSignalInput.Info);
+        list.Add(TestSignalInput.SecondInfo);
         return list;
     }
 }
