@@ -186,20 +186,28 @@ public static class HubEndpoints
         {
             if (!ctx.WebSockets.IsWebSocketRequest) { ctx.Response.StatusCode = 400; return; }
             using var ws = await ctx.WebSockets.AcceptWebSocketAsync();
-            using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(200));
             var ct = ctx.RequestAborted;
             try
             {
-                while (ws.State == WebSocketState.Open && await timer.WaitForNextTickAsync(ct))
+                // Push as soon as a node sends new readings (at most 10×/s), and at least once a second.
+                while (ws.State == WebSocketState.Open)
                 {
+                    var signal = st.LiveSignal; // take it before the snapshot so no update is missed
+                    var sentAt = Environment.TickCount64;
                     var payload = JsonSerializer.SerializeToUtf8Bytes(st.Snapshot(), json.Value.SerializerOptions);
                     await ws.SendAsync(payload, WebSocketMessageType.Text, true, ct);
+                    try { await signal.WaitAsync(TimeSpan.FromSeconds(1), ct); } catch (TimeoutException) { }
+                    var wait = HubLivePushMinMs - (Environment.TickCount64 - sentAt);
+                    if (wait > 0) await Task.Delay((int)wait, ct);
                 }
             }
             catch (OperationCanceledException) { }
             catch (WebSocketException) { }
         });
     }
+
+    /// <summary>Shortest gap between dashboard pushes; several nodes reporting together share one push.</summary>
+    public const int HubLivePushMinMs = 100;
 
     public static ServiceSummary Summarise(ServiceRow s, HubStore store, HubSettingsStore settings)
     {

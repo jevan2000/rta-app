@@ -28,6 +28,9 @@ public sealed class HubClient(MeteringService metering, NodeBuffer buffer, AppMo
 {
     private readonly ConcurrentDictionary<string, DiscoveredHub> _discovered = new();
     private readonly SemaphoreSlim _wake = new(0);
+
+    /// <summary>How often live readings go to the Hub (the node page also updates 10×/s).</summary>
+    public const int LiveIntervalMs = 100;
     private volatile HubLinkStatus _status = new(HubLinkState.Off, null, null, 0, null, []);
     private long _ackSeq;
 
@@ -181,7 +184,7 @@ public sealed class HubClient(MeteringService metering, NodeBuffer buffer, AppMo
                     await Send(Proto.Encode("live", metering.BuildLive()));
                     var hash = JsonSerializer.Serialize(metering.MicInfos(), Proto.Json) + metering.Config.NodeName;
                     if (hash != micHash) await SendHello();
-                    nextLive = now.AddMilliseconds(200);
+                    nextLive = now.AddMilliseconds(LiveIntervalMs);
                 }
 
                 if (accepted)
@@ -201,7 +204,8 @@ public sealed class HubClient(MeteringService metering, NodeBuffer buffer, AppMo
                     }
                 }
 
-                await _wake.WaitAsync(TimeSpan.FromMilliseconds(200), ct);
+                var untilLive = nextLive - DateTimeOffset.UtcNow;
+                await _wake.WaitAsync(untilLive > TimeSpan.Zero ? untilLive : TimeSpan.Zero, ct);
             }
         }
         finally
