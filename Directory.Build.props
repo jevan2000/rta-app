@@ -1,7 +1,7 @@
 <Project>
   <!-- One version for every project and the installer (read by installer/build-installer.ps1). -->
   <PropertyGroup>
-    <Version>1.0.1</Version>
+    <Version>1.0.2</Version>
     <Company>RTA Sound Monitor</Company>
     <Product>RTA Sound Monitor</Product>
     <!-- English-only UI: skip the framework's translated resource folders in published output. -->
