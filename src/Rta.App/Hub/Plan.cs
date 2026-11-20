@@ -61,7 +61,9 @@ public sealed class PlanStore
     public const long MaxImageBytes = 15 * 1024 * 1024;
     private readonly string _file;
     private readonly string _imageDir;
+    private readonly string _historyDir;
     private readonly object _lock = new();
+    public const int HistoryKept = 30;
     private Plan _plan;
 
     public event Action? Changed;
@@ -70,6 +72,7 @@ public sealed class PlanStore
     {
         _file = Path.Combine(paths.DataDir, "plan.json");
         _imageDir = Path.Combine(paths.DataDir, "plan-images");
+        _historyDir = Path.Combine(paths.DataDir, "plan-history");
         Directory.CreateDirectory(_imageDir);
         _plan = SafeFile.ReadJson<Plan>(_file, CalibrationStore.Json) ?? new();
     }
@@ -91,6 +94,7 @@ public sealed class PlanStore
                     Zones = f.Zones.Select(z => z.Id > 0 && seen.Add(z.Id) ? z : z with { Id = next++ }).ToList(),
                 }).ToList(),
             };
+            KeepVersion();
             SafeFile.WriteJson(_file, plan, CalibrationStore.Json);
             _plan = plan;
         }
@@ -118,6 +122,45 @@ public sealed class PlanStore
         var allMics = p.Floors.SelectMany(f => f.Mics).Select(m => m.MicKey).ToList();
         if (allMics.Count != allMics.Distinct().Count()) throw new ArgumentException("A mic is placed on more than one floor.");
     }
+
+    // ---------- earlier versions ----------
+
+    /// <summary>Copies the plan as it is now into plan-history (before it's replaced), keeping the last 30.</summary>
+    private void KeepVersion()
+    {
+        if (!File.Exists(_file)) return;
+        Directory.CreateDirectory(_historyDir);
+        File.Copy(_file, Path.Combine(_historyDir, $"plan-{DateTime.Now:yyyyMMdd-HHmmss-fff}.json"), overwrite: true);
+        foreach (var old in new DirectoryInfo(_historyDir).EnumerateFiles("plan-*.json").OrderByDescending(f => f.Name).Skip(HistoryKept))
+            try { old.Delete(); } catch (IOException) { }
+    }
+
+    public sealed record PlanVersion(string Name, long Saved, int Floors, int Zones, int Mics, string Summary);
+
+    /// <summary>Earlier saved versions, newest first.</summary>
+    public IReadOnlyList<PlanVersion> Versions()
+    {
+        if (!Directory.Exists(_historyDir)) return [];
+        var list = new List<PlanVersion>();
+        foreach (var f in new DirectoryInfo(_historyDir).EnumerateFiles("plan-*.json").OrderByDescending(f => f.Name))
+        {
+            var p = ReadVersion(f.Name);
+            if (p is null) continue;
+            list.Add(new PlanVersion(f.Name, new DateTimeOffset(f.LastWriteTimeUtc).ToUnixTimeSeconds(), p.Floors.Count, p.AllZones.Count(), p.AllMics.Count(),
+                string.Join(", ", p.Floors.Select(x => $"{x.Name}: {x.Shapes.Count} shapes, {x.Zones.Count} zones"))));
+        }
+        return list;
+    }
+
+    public Plan? ReadVersion(string name)
+    {
+        if (name != Path.GetFileName(name) || !name.StartsWith("plan-") || !name.EndsWith(".json")) return null;
+        var path = Path.Combine(_historyDir, name);
+        try { return File.Exists(path) ? System.Text.Json.JsonSerializer.Deserialize<Plan>(File.ReadAllText(path), CalibrationStore.Json) : null; }
+        catch (System.Text.Json.JsonException) { return null; }
+    }
+
+    public byte[]? ReadImage(string id) => GetImage(id) is { } img ? File.ReadAllBytes(img.Path) : null;
 
     /// <summary>Saves an underlay image after checking it really is PNG, JPEG or WebP.</summary>
     public string SaveImage(byte[] data)

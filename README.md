@@ -184,6 +184,11 @@ On **Plan**, draw the room in metres:
 
 Then use **Place mic** to put each **permanent** mic where it really is, and mark the survey mic as **Roving**.
 
+Click **Save plan** when you're done (it says *Unsaved changes* until you do, and warns you before you leave the page). Then:
+- **Versions…** lists the last 30 saved plans; every save keeps the one it replaced, so you can always go back.
+- Unsaved edits are also kept in the browser: if the tab closes or a save fails, the editor offers to restore them next time.
+- **Export room** saves a `.rtaroom` file with the floors, shapes, zones, mic positions, background images and the zones' surveys. **Import room…** loads one back (replacing the current plan, which is kept as a version; a settings backup is saved first). Use it to keep copies of a room, or move it to another Hub.
+
 ![Plan editor](docs/images/plan-editor.png)
 
 ### 2. Survey each zone

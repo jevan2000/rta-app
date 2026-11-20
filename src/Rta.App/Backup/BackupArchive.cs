@@ -344,7 +344,7 @@ public static class BackupArchive
         return made;
     }
 
-    public static readonly Dictionary<string, int> Keep = new() { ["daily-"] = 14, ["before-update-"] = 5, ["before-restore-"] = 5 };
+    public static readonly Dictionary<string, int> Keep = new() { ["daily-"] = 14, ["before-update-"] = 5, ["before-restore-"] = 5, ["before-room-import-"] = 5 };
 
     public static void Prune(string dataDir)
     {
