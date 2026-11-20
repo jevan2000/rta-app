@@ -37,6 +37,16 @@ public class MultiDeviceTests
         Assert.Equal(AudioBackend.TestSignal, moved.Backend);
     }
 
+    [Theory]
+    [InlineData("Microphone (2- UMC404HD 192k)", "Microphone (UMC404HD 192k)", true)]
+    [InlineData("Line In (3- Focusrite USB Audio)", "Line In (Focusrite USB Audio)", true)]
+    [InlineData("2- Scarlett 4i4 USB", "Scarlett 4i4 USB", true)]
+    [InlineData("Microphone (UMC404HD 192k)", "Microphone (Realtek(R) Audio)", false)]
+    [InlineData("Microphone (UMC404HD 192k)", "Line In (UMC404HD 192k)", false)]
+    [InlineData(null, "Microphone (UMC404HD 192k)", false)]
+    public void A_renumbered_interface_is_the_same_model(string? a, string b, bool same) =>
+        Assert.Equal(same, Rta.Audio.DeviceMatch.SameModel(a, b));
+
     private static MeteringService Service(TempData tmp, NodeConfig cfg)
     {
         var store = new NodeConfigStore(tmp.Paths);
@@ -80,6 +90,9 @@ public class MultiDeviceTests
             Assert.Null(st.Error);
             Assert.Equal(2, st.Devices.Count(d => d.Running));
             Assert.Equal(8, st.DeviceChannels);
+            // Each interface's name is remembered, so a moved one can be recognised later.
+            Assert.Equal(["Test signal (virtual)", "Test signal 2 (virtual)"], m.Config.Devices.Select(d => d.DeviceName));
+            Assert.Equal(["Test signal (virtual)", "Test signal 2 (virtual)"], new NodeConfigStore(tmp.Paths).Load().Devices.Select(d => d.DeviceName));
         }
         finally { m.Stop(); }
     }

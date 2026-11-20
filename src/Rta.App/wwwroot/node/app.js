@@ -337,6 +337,8 @@ async function openSettings() {
 let draftDevices = [];
 let draftInputs = new Map();
 const devKey = (d) => `${d.backend}|${d.id ?? d.deviceId}`;
+/** "Microphone (2- UMC404HD 192k)" and "Microphone (UMC404HD 192k)" are the same model (Windows numbers repeats). */
+const model = (n) => (n ?? '').replace(/\(\s*\d+\s*-\s*/g, '(').replace(/^\s*\d+\s*-\s*/, '').toLowerCase().replace(/\s+/g, ' ').trim();
 const infoFor = (dd) => devices.find((d) => d.backend === dd.backend && d.id === dd.deviceId);
 const deviceLabel = (d) => d.backend === 'TestSignal' ? d.name : `${d.backend} Â· ${d.name}`;
 
@@ -344,7 +346,7 @@ const deviceLabel = (d) => d.backend === 'TestSignal' ? d.name : `${d.backend} Â
 function renderDevices() {
   $('sDevices').innerHTML = draftDevices.map((dd, n) => {
     const known = infoFor(dd);
-    const opts = (known ? [] : [`<option value="${esc(dd.backend + '|' + dd.deviceId)}">${esc(dd.deviceId)} (not connected)</option>`])
+    const opts = (known ? [] : [`<option value="${esc(dd.backend + '|' + dd.deviceId)}">${esc(dd.deviceName ?? dd.deviceId)} (not connected)</option>`])
       .concat(devices.map((d) => `<option value="${esc(devKey(d))}" ${known === d ? 'selected' : ''}>${esc(deviceLabel(d))}${d.inputChannels ? ` (${d.inputChannels} in)` : ''}</option>`)).join('');
     return `<div class="devrow" data-slot="${dd.slot}"><span class="slot">${n + 1}</span><select class="dSel">${opts}</select>
       ${draftDevices.length > 1 ? '<button class="dDel" title="Stop using this interface">Remove</button>' : ''}</div>`;
@@ -383,9 +385,16 @@ function changeDevice(slot, key) {
   const dd = draftDevices.find((x) => x.slot === slot);
   if (!d || !dd || (dd.backend === d.backend && dd.deviceId === d.id)) return;
   if (draftDevices.some((x) => x.slot !== slot && x.backend === d.backend && x.deviceId === d.id)) { $('sMsg').textContent = 'That interface is already in the list.'; renderDevices(); return; }
-  dd.backend = d.backend; dd.deviceId = d.id;
-  for (const ch of [...draftInputs.keys()]) if (Math.floor(ch / 100) === slot) draftInputs.delete(ch); // inputs belonged to the old interface
-  $('sMsg').textContent = `Interface ${draftDevices.indexOf(dd) + 1} changed: its inputs were reset.`;
+  // The same interface on another USB port gets a new Windows id (and often a "2-" in its name): keep its inputs.
+  const oldName = dd.deviceName ?? infoFor(dd)?.name;
+  const same = (oldName && model(oldName) === model(d.name))
+    || confirm(`Is "${d.name}" the same interface as before, just plugged in differently?
+
+OK: keep its inputs (names, mics, calibration).
+Cancel: start its inputs fresh.`);
+  dd.backend = d.backend; dd.deviceId = d.id; dd.deviceName = d.name;
+  if (!same) for (const ch of [...draftInputs.keys()]) if (Math.floor(ch / 100) === slot) draftInputs.delete(ch); // inputs belonged to the old interface
+  $('sMsg').textContent = same ? `Interface ${draftDevices.indexOf(dd) + 1} changed; its inputs were kept. Save to apply.` : `Interface ${draftDevices.indexOf(dd) + 1} changed: its inputs were reset.`;
   renderDevices();
 }
 
@@ -397,7 +406,7 @@ function addDevice() {
   const free = devices.filter((d) => !draftDevices.some((x) => x.backend === d.backend && x.deviceId === d.id));
   const pick = free.find((d) => d.backend === 'Wasapi') ?? free.find((d) => !(hasAsio && d.backend === 'Asio')) ?? free[0];
   if (slot == null || !pick) return;
-  draftDevices.push({ slot, backend: pick.backend, deviceId: pick.id });
+  draftDevices.push({ slot, backend: pick.backend, deviceId: pick.id, deviceName: pick.name });
   $('sMsg').textContent = 'Interface added. Choose it in the list, then name its inputs.';
   renderDevices();
 }

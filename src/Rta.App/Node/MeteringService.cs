@@ -131,6 +131,9 @@ public sealed class MeteringService(NodeConfigStore configStore, CalibrationStor
 
     public NodeConfig Config { get; private set; } = configStore.Load();
 
+    private Timer? _recovery;
+    private readonly List<string> _notes = [];
+
     public Task StartAsync(CancellationToken ct)
     {
         if (Config.AutoStart)
@@ -138,10 +141,73 @@ public sealed class MeteringService(NodeConfigStore configStore, CalibrationStor
             try { Start(); }
             catch (Exception ex) { log.LogError(ex, "Audio start failed"); }
         }
+        // An interface that was missing (unplugged, or moved to another USB port) is picked up when it appears.
+        _recovery = new Timer(_ => TryRecover(), null, TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(10));
         return Task.CompletedTask;
     }
 
-    public Task StopAsync(CancellationToken ct) { Stop(); return Task.CompletedTask; }
+    public Task StopAsync(CancellationToken ct)
+    {
+        _recovery?.Dispose();
+        Stop();
+        return Task.CompletedTask;
+    }
+
+    /// <summary>Restarts audio if an interface that failed to start is now available.</summary>
+    private void TryRecover()
+    {
+        try
+        {
+            List<DeviceRun> failed;
+            lock (_lock) failed = _devices.Where(d => d.Input is null && d.Error is not null).ToList();
+            if (failed.Count == 0) return;
+            var wasapi = failed.Any(f => f.Config.Backend == AudioBackend.Wasapi) ? WasapiInput.List() : [];
+            var asio = failed.Any(f => f.Config.Backend == AudioBackend.Asio) ? AsioInput.DriverNames() : [];
+            bool Back(DeviceConfig d) => d.Backend switch
+            {
+                AudioBackend.Wasapi => wasapi.Any(w => w.Id.Equals(d.DeviceId, StringComparison.OrdinalIgnoreCase) || DeviceMatch.SameModel(w.Name, d.DeviceName)),
+                AudioBackend.Asio => asio.Contains(d.DeviceId, StringComparer.OrdinalIgnoreCase),
+                _ => false,
+            };
+            if (!failed.Any(f => Back(f.Config))) return;
+            log.LogInformation("An audio interface is available again; restarting audio");
+            Start();
+        }
+        catch (Exception ex) { log.LogDebug(ex, "Audio recovery check failed"); }
+    }
+
+    /// <summary>
+    /// Points WASAPI interfaces whose id has gone (moved to another USB port) at the device with the same
+    /// name, if exactly one matches. Their inputs, names and calibration then carry on as before.
+    /// </summary>
+    private NodeConfig RelinkMovedDevices(NodeConfig cfg)
+    {
+        if (!cfg.Devices.Any(d => d.Backend == AudioBackend.Wasapi && d.DeviceName is not null)) return cfg;
+        var available = WasapiInput.List();
+        var devices = cfg.Devices.ToList();
+        var changed = false;
+        for (var i = 0; i < devices.Count; i++)
+        {
+            var d = devices[i];
+            if (d.Backend != AudioBackend.Wasapi || d.DeviceName is null) continue;
+            if (available.Any(a => a.Id.Equals(d.DeviceId, StringComparison.OrdinalIgnoreCase))) continue;
+            var taken = devices.Where(o => o.Slot != d.Slot && o.Backend == AudioBackend.Wasapi).Select(o => o.DeviceId).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var matches = available.Where(a => !taken.Contains(a.Id) && DeviceMatch.SameModel(a.Name, d.DeviceName)).ToList();
+            if (matches.Count != 1)
+            {
+                if (matches.Count > 1) lock (_notes) _notes.Add($"'{d.DeviceName}' isn't where it was, and {matches.Count} devices look like it. Choose it in Settings.");
+                continue;
+            }
+            devices[i] = d with { DeviceId = matches[0].Id, DeviceName = matches[0].Name };
+            changed = true;
+            lock (_notes) _notes.Add($"Found '{d.DeviceName}' as '{matches[0].Name}' (another USB port, perhaps) and kept its inputs and calibration.");
+            log.LogWarning("Audio interface {Old} moved: now {New} ({Id})", d.DeviceName, matches[0].Name, matches[0].Id);
+        }
+        if (!changed) return cfg;
+        cfg = (cfg with { Devices = devices }).Normalized();
+        configStore.Save(cfg);
+        return cfg;
+    }
 
     /// <summary>(Re)starts every configured interface. Throws only if none of them could start.</summary>
     public void Start()
@@ -151,7 +217,8 @@ public sealed class MeteringService(NodeConfigStore configStore, CalibrationStor
             StopLocked();
             _error = null;
             lock (_runtimeWarnings) _runtimeWarnings.Clear();
-            var cfg = Config;
+            lock (_notes) _notes.Clear();
+            var cfg = Config = RelinkMovedDevices(Config);
             var runs = new List<DeviceRun>();
             foreach (var dc in cfg.Devices)
             {
@@ -182,6 +249,16 @@ public sealed class MeteringService(NodeConfigStore configStore, CalibrationStor
                 }
             }
             _devices = runs;
+
+            // Remember each interface's name, so it can be recognised if it turns up under a new id.
+            var named = cfg.Devices.Select(d => runs.FirstOrDefault(r => r.Config.Slot == d.Slot)?.Input?.DeviceName is { Length: > 0 } n && n != d.DeviceName
+                ? d with { DeviceName = n } : d).ToList();
+            if (!named.SequenceEqual(cfg.Devices))
+            {
+                cfg = cfg with { Devices = named };
+                Config = cfg;
+                configStore.Save(cfg);
+            }
 
             // First run on an interface: create an input entry per channel (up to 8 enabled per interface).
             var added = runs.Where(r => r.Input is not null && !cfg.Inputs.Any(i => InputNumber.Slot(i.ChannelIndex) == r.Config.Slot))
@@ -321,7 +398,8 @@ public sealed class MeteringService(NodeConfigStore configStore, CalibrationStor
         next = (next.Devices.Count == 0 ? next with { Devices = [new DeviceConfig { Slot = 0, Backend = next.Backend, DeviceId = next.DeviceId }] } : next)
             .Normalized() with { NodeId = prev.NodeId };
         if (next.DeviceProblem() is { } problem) throw new ArgumentException(problem);
-        var deviceChanged = next.SampleRate != prev.SampleRate || !next.Devices.SequenceEqual(prev.Devices);
+        var deviceChanged = next.SampleRate != prev.SampleRate || next.Devices.Count != prev.Devices.Count
+                            || next.Devices.Zip(prev.Devices).Any(p => !p.First.SameDevice(p.Second));
         configStore.Save(next);
         Config = next;
 
@@ -390,6 +468,7 @@ public sealed class MeteringService(NodeConfigStore configStore, CalibrationStor
                     ?? new ThirdOctaveBank(Config.SampleRate).Bands.Select(b => b.NominalHz).ToList();
         var warnings = new List<string>();
         lock (_runtimeWarnings) warnings.AddRange(_runtimeWarnings);
+        lock (_notes) warnings.AddRange(_notes);
         if (Config.SampleRate > 48000)
             warnings.Add($"{Config.SampleRate / 1000.0:0.#} kHz uses about twice the CPU and network of 48 kHz. 48 kHz is enough for SPL metering.");
         foreach (var d in devices.Where(d => d.Dropped > 0))
