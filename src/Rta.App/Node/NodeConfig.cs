@@ -100,8 +100,9 @@ public sealed class NodePaths
 
     public NodePaths(IConfiguration config)
     {
-        DataDir = config["DataDir"] ?? Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "RtaApp");
+        // Always a full path: files served from it (reports, plan images, backups) must not be taken as web paths.
+        DataDir = Path.GetFullPath(config["DataDir"] ?? Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "RtaApp"));
         Directory.CreateDirectory(DataDir);
     }
 }

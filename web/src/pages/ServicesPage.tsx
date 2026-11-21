@@ -86,7 +86,7 @@ function ServiceList() {
 }
 
 function ServiceDetail({ id }: { id: number }) {
-  const { live } = useApp();
+  const { live, auth } = useApp();
   const running = live?.service?.id === id;
   const { data, error, reload } = useFetch<ServiceSummary>(`/api/hub/services/${id}`, running ? 15000 : undefined);
   if (error) return <Empty>{error} <a href="#/services">Back</a></Empty>;
@@ -115,8 +115,8 @@ function ServiceDetail({ id }: { id: number }) {
         <span className="spacer" />
         <a className="btnlink" href={`/api/hub/services/${id}/report.pdf`} target="_blank" rel="noreferrer">PDF report</a>
         <a className="btnlink" href={`/api/hub/services/${id}/export.csv`}>CSV (per second)</a>
-        <button className="ghost" onClick={rename}>Rename</button>
-        <button className="ghost" onClick={remove}>Delete</button>
+        {!auth?.monitor && <button className="ghost" onClick={rename}>Rename</button>}
+        {!auth?.monitor && <button className="ghost" onClick={remove}>Delete</button>}
       </div>
       <p className="muted">{fmtTime(s.startTs, true)} – {s.endTs ? fmtTime(s.endTs) : 'now'} · {fmtDuration((s.endTs ?? nowSec()) - s.startTs)} · {s.source === 'schedule' ? 'scheduled' : 'started manually'}</p>
       <section className="panel">
