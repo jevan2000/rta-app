@@ -82,6 +82,7 @@ Download the latest **`RtaSetup-<version>.exe`** from the repo's [Releases page]
 | **Mics and the Hub on this PC** | A single-PC setup, or the main FOH PC. |
 | **Mics only** | A booth PC or laptop that sends readings to a Hub elsewhere. |
 | **Hub only** | An office or server PC with no mics that runs the dashboard and logging. |
+| **Monitor only** | A PC that just **watches**: the full dashboard and alarm pop-ups of the Hub, **view only**, with no mics. It finds the Hub on the network by itself and opens the dashboard at sign-in. Nothing can be changed from it, even with the admin password. |
 
 **2. How should RTA start?**
 
@@ -91,6 +92,8 @@ Download the latest **`RtaSetup-<version>.exe`** from the repo's [Releases page]
 | **As a Windows service at boot** | **Hub-only PCs.** It runs with nobody signed in, and restarts itself if it ever crashes. |
 
 Leave **"Allow RTA through Windows Firewall"** ticked. The Hub, the other nodes and NDI need it, and the rule only applies on private and domain networks.
+
+On a **monitor** PC, install with **when someone signs in**. Its dashboard is at **http://localhost:5180** and shows **View only** at the top right. If there's more than one Hub on the network, or the Hub is on another subnet, choose it under **Settings → Monitor PC**.
 
 When setup finishes:
 
@@ -107,8 +110,9 @@ When setup finishes:
 ```bat
 RtaSetup-1.0.3.exe /VERYSILENT /ROLE=Both /RUNAS=signin /TASKS="firewall,startup"
 RtaSetup-1.0.3.exe /VERYSILENT /ROLE=Hub  /RUNAS=service /TASKS="firewall"
+RtaSetup-1.0.3.exe /VERYSILENT /ROLE=Monitor /RUNAS=signin /TASKS="firewall,startup"
 ```
-`/ROLE` is `Both`, `Node` or `Hub`; `/RUNAS` is `signin` or `service`. The choices are saved in `C:\ProgramData\RtaApp\app.json`.
+`/ROLE` is `Both`, `Node`, `Hub` or `Monitor`; `/RUNAS` is `signin` or `service`. The choices are saved in `C:\ProgramData\RtaApp\app.json`.
 </details>
 
 ---

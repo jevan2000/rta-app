@@ -20,12 +20,13 @@ public sealed class PcSettingsStore(NodePaths paths, AppMode mode)
 
     public PcSettings Current
     {
-        get { lock (_lock) return SafeFile.ReadJson<PcSettings>(File, CalibrationStore.Json) ?? new(); }
+        // A monitor PC opens the dashboard at sign-in unless told otherwise.
+        get { lock (_lock) return SafeFile.ReadJson<PcSettings>(File, CalibrationStore.Json) ?? new() { OpenAtStartup = mode.IsMonitor ? StartupPage.Dashboard : StartupPage.Off }; }
     }
 
     public PcSettings Save(PcSettings s)
     {
-        if (s.OpenAtStartup == StartupPage.Dashboard && !mode.RunsHub)
+        if (s.OpenAtStartup == StartupPage.Dashboard && !mode.ServesDashboard)
             throw new ArgumentException("This PC doesn't run the Hub, so there's no dashboard to open. Choose the node page.");
         if (s.OpenAtStartup == StartupPage.Node && !mode.RunsNode)
             throw new ArgumentException("This PC doesn't run a node. Choose the dashboard.");
@@ -36,7 +37,7 @@ public sealed class PcSettingsStore(NodePaths paths, AppMode mode)
     /// <summary>The page to open, or null; falls back if the role changed since it was chosen.</summary>
     public string? StartupPath() => Current.OpenAtStartup switch
     {
-        StartupPage.Dashboard => mode.RunsHub ? "/" : "/node/",
+        StartupPage.Dashboard => mode.ServesDashboard ? "/" : "/node/",
         StartupPage.Node => mode.RunsNode ? "/node/" : "/",
         _ => null,
     };

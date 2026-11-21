@@ -255,3 +255,8 @@ Status: design agreed 2026-11-17. Phase 1 (Node) built 2026-11-17. Phase 2 (Hub)
 - `MeteringService` runs each interface separately (its own queue and worker); clocks needn't be shared because every channel is metered on its own. A device that fails is reported in `NodeStatus.Error`/`Devices` while the rest keep metering; `Start()` throws only if none start. `RawAudio` carries the slot so NDI audio takes each input from its own interface.
 - At most one ASIO device (one ASIO driver per process); duplicates and clashing slots are refused by `DeviceProblem()`.
 - A second virtual device ("Test signal 2", 4 dB quieter) makes multi-interface setups testable without hardware.
+
+### Monitor role
+- `AppRole.Monitor`: no node, no Hub. `MonitorService` finds a Hub from the UDP beacons (or a fixed address in `monitor.json`; with several Hubs it remembers the one last watched) and the app serves the dashboard locally: `GET /api/hub/**` and `/api/v1/**` are passed through to the Hub, `/ws/hub` is relayed (dropped when the Hub changes so the page reconnects).
+- Read-only by construction: on a monitor the admin guard refuses every non-GET `/api` call except the PC's own `/api/monitor` and `/api/pc`, and only from loopback; `/api/auth/status` reports `monitor: true, canEdit: false`, so the dashboard shows "View only" and never prompts to sign in.
+- Listens on localhost only; opens the dashboard at sign-in by default; the tray treats it like a Hub (dashboard menu, alarm pop-ups).

@@ -32,7 +32,7 @@ builder.Logging.AddProvider(new FileLoggerProvider(Path.Combine(new NodePaths(bu
 // Mode: Node (capture only), Hub (dashboard/logging only) or Both (default: one PC does everything).
 var role = AppMode.Parse(builder.Configuration["Mode"]);
 // A Hub must be reachable from the LAN; a node-only PC stays local unless told otherwise.
-var urls = builder.Configuration["Urls"] ?? (role == AppRole.Node ? "http://localhost:5180" : "http://0.0.0.0:5180");
+var urls = builder.Configuration["Urls"] ?? (role is AppRole.Node or AppRole.Monitor ? "http://localhost:5180" : "http://0.0.0.0:5180");
 builder.WebHost.UseUrls(urls);
 var port = Uri.TryCreate(urls.Split(';')[0].Replace("0.0.0.0", "localhost").Replace("*", "localhost").Replace("+", "localhost"), UriKind.Absolute, out var u) ? u.Port : 5180;
 var mode = new AppMode(role, port);
@@ -86,6 +86,13 @@ if (mode.RunsNode)
     builder.Services.AddHostedService(sp => sp.GetRequiredService<NodeNdiService>());
 }
 
+if (mode.IsMonitor)
+{
+    builder.Services.AddHttpClient("monitor", c => c.Timeout = TimeSpan.FromSeconds(15));
+    builder.Services.AddSingleton<Rta.App.Monitor.MonitorService>();
+    builder.Services.AddHostedService(sp => sp.GetRequiredService<Rta.App.Monitor.MonitorService>());
+}
+
 if (mode.RunsHub)
 {
     builder.Services.AddSingleton<HubStore>();
@@ -117,7 +124,9 @@ app.UseWebSockets(new WebSocketOptions { KeepAliveInterval = TimeSpan.FromSecond
 // dashboard; on a node-only PC (no Hub API) it redirects to the node page.
 app.Use(async (ctx, next) =>
 {
-    if (!mode.RunsHub && (ctx.Request.Path == "/" || ctx.Request.Path == "/index.html")) { ctx.Response.Redirect("/node/"); return; }
+    if (!mode.ServesDashboard && (ctx.Request.Path == "/" || ctx.Request.Path == "/index.html")) { ctx.Response.Redirect("/node/"); return; }
+    // A monitor PC has no node page.
+    if (mode.IsMonitor && ctx.Request.Path.StartsWithSegments("/node")) { ctx.Response.Redirect("/"); return; }
     await next();
 });
 app.UseDefaultFiles();
@@ -136,7 +145,7 @@ app.UseAdminGuard();
 
 app.MapGet("/api/app", (PcSettingsStore pc) => new
 {
-    role = mode.Role, runsNode = mode.RunsNode, runsHub = mode.RunsHub, version = AppMode.Version,
+    role = mode.Role, runsNode = mode.RunsNode, runsHub = mode.RunsHub, monitor = mode.IsMonitor, version = AppMode.Version,
     runAs = WindowsServiceHelpers.IsWindowsService() ? "service" : builder.Configuration["RunAs"] ?? "process",
     dataDir,
     openAtStartup = pc.Current.OpenAtStartup,
@@ -152,6 +161,7 @@ app.MapAuthEndpoints();
 app.MapBackupEndpoints(mode, builder.Configuration);
 app.MapNdiEndpoints(mode);
 if (mode.RunsNode) app.MapNodeEndpoints();
+if (mode.IsMonitor) Rta.App.Monitor.MonitorEndpoints.MapMonitorEndpoints(app);
 if (mode.RunsHub)
 {
     app.MapHubEndpoints();
@@ -160,7 +170,7 @@ if (mode.RunsHub)
 }
 
 // Client-side routes of the dashboard (e.g. /history) fall back to its index.html.
-if (mode.RunsHub)
+if (mode.ServesDashboard)
     app.MapFallback(async (HttpContext ctx, IWebHostEnvironment env) =>
     {
         var index = env.WebRootFileProvider.GetFileInfo("index.html");
