@@ -35,6 +35,14 @@ public sealed record DeviceConfig
     public int Slot { get; init; }
     public AudioBackend Backend { get; init; } = AudioBackend.TestSignal;
     public string DeviceId { get; init; } = TestSignalInput.DeviceId;
+    /// <summary>
+    /// The interface's name when last seen. Windows gives a WASAPI device a new id on another USB port,
+    /// so this is how a moved interface is recognised (see <see cref="DeviceMatch"/>).
+    /// </summary>
+    public string? DeviceName { get; init; }
+
+    /// <summary>Same interface choice (ignores the remembered name).</summary>
+    public bool SameDevice(DeviceConfig o) => Slot == o.Slot && Backend == o.Backend && string.Equals(DeviceId, o.DeviceId, StringComparison.OrdinalIgnoreCase);
 }
 
 public sealed record NodeConfig
