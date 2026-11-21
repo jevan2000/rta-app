@@ -96,6 +96,7 @@ function MicCard({ m, rules }: { m: MicView; rules: ReturnType<typeof useRules>[
 
 function ServiceBar() {
   const { live, auth } = useApp();
+  const viewOnly = !!auth?.monitor;
   const [busy, setBusy] = useState(false);
   const s = live?.service;
   const act = async (fn: () => Promise<unknown>) => {
@@ -110,18 +111,18 @@ function ServiceBar() {
           <b>{s.name}</b>
           <span className="muted">{fmtDuration(nowSec() - s.startTs)} · {s.source === 'schedule' ? 'scheduled' : 'started manually'}</span>
           <a href={`#/services/${s.id}`}>Details</a>
-          <button disabled={busy} onClick={() => act(() => api('/api/hub/services/stop', { method: 'POST' }))}>Stop service</button>
+          {!viewOnly && <button disabled={busy} onClick={() => act(() => api('/api/hub/services/stop', { method: 'POST' }))}>Stop service</button>}
         </>
       ) : (
         <>
-          <span className="muted">No service running. Services start from the <a href="#/services">schedule</a>, or:</span>
-          <button disabled={busy} onClick={() => act(async () => {
+          <span className="muted">No service running.{viewOnly ? '' : <> Services start from the <a href="#/services">schedule</a>, or:</>}</span>
+          {!viewOnly && <button disabled={busy} onClick={() => act(async () => {
             const name = prompt('Service name:', `Service ${new Date().toLocaleString(undefined, { weekday: 'short', hour: '2-digit', minute: '2-digit' })}`);
             if (name != null) await api('/api/hub/services/start', { method: 'POST', json: { name } });
-          })}>Start service now</button>
+          })}>Start service now</button>}
         </>
       )}
-      {auth && !auth.canEdit && <span className="muted small">(sign in to start or stop)</span>}
+      {auth && !auth.canEdit && !viewOnly && <span className="muted small">(sign in to start or stop)</span>}
     </div>
   );
 }

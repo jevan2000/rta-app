@@ -1,6 +1,6 @@
 ; Inno Setup script for RTA Sound Monitor. Build with installer\build-installer.ps1.
 ;
-; Silent / scripted installs:  RtaSetup-x.y.z.exe /VERYSILENT /ROLE=Both|Node|Hub /RUNAS=signin|service [/TASKS="firewall,startup"]
+; Silent / scripted installs:  RtaSetup-x.y.z.exe /VERYSILENT /ROLE=Both|Node|Hub|Monitor /RUNAS=signin|service [/TASKS="firewall,startup"]
 
 #ifndef AppVersion
   #define AppVersion "0.0.0"
@@ -76,6 +76,7 @@ begin
   case RolePage.SelectedValueIndex of
     1: Result := 'Node';
     2: Result := 'Hub';
+    3: Result := 'Monitor';
   else
     Result := 'Both';
   end;
@@ -121,6 +122,7 @@ begin
   RolePage.Add('Mics and the Hub on this PC (one-PC setup, or the main PC)');
   RolePage.Add('Mics only: send readings to a Hub on another PC');
   RolePage.Add('Hub only: dashboard, logging and alerts, no mics on this PC');
+  RolePage.Add('Monitor only: watch the Hub''s dashboard and alerts from this PC (view only, no mics)');
 
   RunPage := CreateInputOptionPage(RolePage.ID, 'How should RTA start?',
     'Choose how the app runs on this PC.',
@@ -135,6 +137,7 @@ begin
   if R = '' then R := ExistingValue('Mode');
   if CompareText(R, 'Node') = 0 then RolePage.SelectedValueIndex := 1
   else if CompareText(R, 'Hub') = 0 then RolePage.SelectedValueIndex := 2
+  else if CompareText(R, 'Monitor') = 0 then RolePage.SelectedValueIndex := 3
   else RolePage.SelectedValueIndex := 0;
 
   A := ExpandConstant('{param:RUNAS|}');
@@ -193,7 +196,7 @@ begin
   Urls := ExistingValue('Urls');
   if (Urls = '') or (CompareText(ExistingValue('Mode'), Role) <> 0) then
   begin
-    if Role = 'Node' then Urls := 'http://localhost:5180' else Urls := 'http://0.0.0.0:5180';
+    if (Role = 'Node') or (Role = 'Monitor') then Urls := 'http://localhost:5180' else Urls := 'http://0.0.0.0:5180';
   end;
   Json := '{' + #13#10 +
     '  "Mode": "' + Role + '",' + #13#10 +

@@ -1,6 +1,7 @@
 namespace Rta.App;
 
-public enum AppRole { Node, Hub, Both }
+/// <summary>Node: mics only. Hub: dashboard and logging. Both. Monitor: views another PC's Hub, read-only, no mics.</summary>
+public enum AppRole { Node, Hub, Both, Monitor }
 
 /// <summary>Which parts of the app run in this process (from config "Mode"; default Both).</summary>
 public sealed class AppMode
@@ -8,6 +9,9 @@ public sealed class AppMode
     public AppRole Role { get; }
     public bool RunsNode => Role is AppRole.Node or AppRole.Both;
     public bool RunsHub => Role is AppRole.Hub or AppRole.Both;
+    public bool IsMonitor => Role is AppRole.Monitor;
+    /// <summary>Serves the dashboard: a Hub, or a monitor showing another PC's Hub.</summary>
+    public bool ServesDashboard => RunsHub || IsMonitor;
     /// <summary>Port this process listens on (for the local node to reach a local hub).</summary>
     public int Port { get; }
 

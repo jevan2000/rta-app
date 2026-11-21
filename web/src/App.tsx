@@ -59,6 +59,10 @@ export function App() {
   const signIn = useCallback(async () => {
     const st = await getAuth();
     setAuth(st);
+    if (st.monitor) {
+      alert('This is a monitor PC: it can only view the Hub. Make changes on the Hub PC (or any PC that isn\'t a monitor).');
+      return false;
+    }
     if (!st.passwordSet && !st.local) {
       alert('No admin password is set yet. Set one on the Hub PC itself (open this page there), then sign in here.');
       return false;
@@ -100,7 +104,7 @@ export function App() {
               {r === 'alerts' && (live?.alerts.length ?? 0) > 0 ? <span className="count alarm">{live!.alerts.length}</span> : null}
             </a>
           ))}
-          <a href="/node/" target="_blank" rel="noopener" className="ext" title="This PC's own node page (audio, inputs, calibration)">Node ↗</a>
+          {!auth?.monitor && <a href="/node/" target="_blank" rel="noopener" className="ext" title="This PC's own node page (audio, inputs, calibration)">Node ↗</a>}
           <AuthButton />
         </nav>
       </header>
@@ -130,6 +134,7 @@ export function App() {
 function AuthButton() {
   const { auth, signIn, refreshAuth } = useApp();
   if (!auth) return null;
+  if (auth.monitor) return <a href="#/settings" className="pill wait" title="This PC is a monitor: it shows the Hub's dashboard but can't change anything">View only</a>;
   if (auth.signedIn)
     return <button className="ghost" onClick={async () => { await api('/api/auth/logout', { method: 'POST' }); await refreshAuth(); }}>Sign out</button>;
   if (auth.canEdit) return <span className="muted small" title="No password set; changes allowed from this PC only">Local admin</span>;

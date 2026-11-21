@@ -95,7 +95,9 @@ internal sealed class TrayApp : ApplicationContext
                 _startupPageDone = true;
                 if (app["startupPath"]?.ToString() is { Length: > 0 } startup) Open(startup);
             }
-            var runsHub = app["runsHub"]?.GetValue<bool>() == true;
+            // A monitor PC shows another PC's Hub through this app, so it gets the dashboard and alarm pop-ups too.
+            var monitor = app["monitor"]?.GetValue<bool>() == true;
+            var runsHub = app["runsHub"]?.GetValue<bool>() == true || monitor;
             var runsNode = app["runsNode"]?.GetValue<bool>() == true;
             _dashboardItem.Visible = runsHub;
             _nodeItem.Visible = runsNode;

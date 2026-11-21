@@ -102,7 +102,8 @@ export interface HubSettings {
   hubId: string; name: string; secondsRetentionDays: number; autoAcceptNodes: boolean; alertRules: AlertRule[];
 }
 
-export interface AuthStatus { passwordSet: boolean; signedIn: boolean; canEdit: boolean; local: boolean }
+/** monitor: this PC only views another PC's Hub (read-only, no sign-in). */
+export interface AuthStatus { passwordSet: boolean; signedIn: boolean; canEdit: boolean; local: boolean; monitor?: boolean }
 
 export interface MicRow {
   id: number; key: string; nodeId: string; channelIndex: number; name: string; displayName: string | null;

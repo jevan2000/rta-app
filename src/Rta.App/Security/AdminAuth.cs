@@ -82,11 +82,29 @@ public sealed class AdminAuth
 
 public static class AdminAuthExtensions
 {
-    /// <summary>Requires admin for every non-GET /api call except login/setup.</summary>
+    /// <summary>
+    /// Requires admin for every non-GET /api call except login/setup. On a monitor PC, only its own
+    /// settings (which Hub to watch, what opens at sign-in) can change, and only from the PC itself.
+    /// </summary>
     public static IApplicationBuilder UseAdminGuard(this IApplicationBuilder app) => app.Use(async (ctx, next) =>
     {
         var path = ctx.Request.Path;
         var mutating = !HttpMethods.IsGet(ctx.Request.Method) && !HttpMethods.IsHead(ctx.Request.Method) && !HttpMethods.IsOptions(ctx.Request.Method);
+        if (mutating && path.StartsWithSegments("/api") && ctx.RequestServices.GetRequiredService<AppMode>().IsMonitor)
+        {
+            if (!(path.StartsWithSegments("/api/monitor") || path.StartsWithSegments("/api/pc")) || !AdminAuth.IsLoopback(ctx))
+            {
+                ctx.Response.StatusCode = StatusCodes.Status403Forbidden;
+                await ctx.Response.WriteAsJsonAsync(new
+                {
+                    title = "View only",
+                    detail = "This is a monitor PC: it can only view the Hub. Make changes on the Hub PC (or any PC that isn't a monitor).",
+                });
+                return;
+            }
+            await next();
+            return;
+        }
         if (mutating && path.StartsWithSegments("/api") && !path.StartsWithSegments("/api/auth"))
         {
             var auth = ctx.RequestServices.GetRequiredService<AdminAuth>();
@@ -110,12 +128,13 @@ public static class AdminAuthExtensions
     public static void MapAuthEndpoints(this IEndpointRouteBuilder app)
     {
         var g = app.MapGroup("/api/auth");
-        g.MapGet("/status", (HttpContext ctx, AdminAuth auth) => new
+        g.MapGet("/status", (HttpContext ctx, AdminAuth auth, AppMode mode) => new
         {
             passwordSet = auth.PasswordSet,
-            signedIn = ctx.User.Identity?.IsAuthenticated == true,
-            canEdit = auth.IsAdmin(ctx),
+            signedIn = !mode.IsMonitor && ctx.User.Identity?.IsAuthenticated == true,
+            canEdit = !mode.IsMonitor && auth.IsAdmin(ctx),
             local = AdminAuth.IsLoopback(ctx),
+            monitor = mode.IsMonitor,
         });
         g.MapPost("/setup", async (PasswordBody body, HttpContext ctx, AdminAuth auth) =>
         {

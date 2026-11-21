@@ -7,6 +7,68 @@ import { useFetch } from '../hooks';
 import type { HubSettings } from '../types';
 
 export function SettingsPage() {
+  const { auth } = useApp();
+  if (auth?.monitor) return <MonitorSettingsPage />;
+  return <HubSettingsPage />;
+}
+
+interface MonitorStatus {
+  hubConnection: 'Auto' | 'Manual' | 'Off'; hubAddress: string | null; hubUrl: string | null; hubName: string | null;
+  connected: boolean; message: string; discovered: { hubId: string; name: string; url: string }[];
+}
+
+/** A monitor PC's own settings: which Hub to watch, and what opens at sign-in. */
+function MonitorSettingsPage() {
+  const { data, reload } = useFetch<MonitorStatus>('/api/monitor', 5000);
+  const [address, setAddress] = useState<string | null>(null);
+  const [msg, setMsg] = useState('');
+  if (!data) return <Empty>Loading…</Empty>;
+  const put = async (body: object) => {
+    try { await api('/api/monitor', { method: 'PUT', json: body }); setMsg('Saved. The dashboard reconnects in a few seconds.'); reload(); }
+    catch (e) { setMsg((e as Error).message); }
+  };
+  return (
+    <>
+      <div className="page-head"><h2>Settings</h2></div>
+      <section className="panel">
+        <h3>Monitor PC</h3>
+        <p>This PC shows a Hub’s dashboard and alerts, <b>view only</b>: nothing can be changed from here, even with the admin password. Make changes on the Hub PC.</p>
+        <p className={data.connected ? 'ok-text' : 'warn'}>{data.message}</p>
+        <div className="form-grid">
+          <label>Hub to watch
+            <select value={data.hubConnection} onChange={(e) => put({ hubConnection: e.target.value, hubAddress: data.hubAddress })}>
+              <option value="Auto">Find it on the network</option>
+              <option value="Manual">At a fixed address</option>
+            </select>
+          </label>
+          {data.hubConnection === 'Manual' && (
+            <label>Hub address
+              <input value={address ?? data.hubAddress ?? ''} placeholder="e.g. 192.168.1.20:5180" onChange={(e) => setAddress(e.target.value)}
+                onBlur={() => address != null && put({ hubConnection: 'Manual', hubAddress: address })} />
+            </label>
+          )}
+        </div>
+        {data.hubConnection === 'Auto' && data.discovered.length > 1 && (
+          <>
+            <h4>Hubs on the network</h4>
+            {data.discovered.map((h) => (
+              <label key={h.hubId} className="check" style={{ display: 'block' }}>
+                <input type="radio" checked={data.hubUrl === h.url} onChange={() => put({ hubConnection: 'Auto', preferredHubId: h.hubId })} /> {h.name} <span className="muted small">{h.url}</span>
+              </label>
+            ))}
+          </>
+        )}
+        {data.hubConnection === 'Auto' && data.discovered.length === 0 && (
+          <p className="muted small">No Hub found yet. Hubs announce themselves on UDP port 5181; if the Hub is on another subnet or VLAN, use a fixed address.</p>
+        )}
+        {msg && <p className="muted small">{msg}</p>}
+      </section>
+      <ThisPcSection />
+    </>
+  );
+}
+
+function HubSettingsPage() {
   const { data, reload } = useFetch<HubSettings>('/api/hub/settings');
   const [form, setForm] = useState<HubSettings | null>(null);
   const [msg, setMsg] = useState('');
@@ -48,7 +110,7 @@ export function SettingsPage() {
 }
 
 function ThisPcSection() {
-  const { data, reload } = useFetch<{ runsNode: boolean; runsHub: boolean; openAtStartup: string; runAs: string }>('/api/app');
+  const { data, reload } = useFetch<{ runsNode: boolean; runsHub: boolean; monitor: boolean; openAtStartup: string; runAs: string }>('/api/app');
   const [msg, setMsg] = useState('');
   if (!data) return null;
   const set = async (openAtStartup: string) => {
@@ -62,7 +124,7 @@ function ThisPcSection() {
         <label>When someone signs in, open
           <select value={data.openAtStartup} onChange={(e) => set(e.target.value)}>
             <option value="Off">Nothing</option>
-            {data.runsHub && <option value="Dashboard">The dashboard</option>}
+            {(data.runsHub || data.monitor) && <option value="Dashboard">The dashboard</option>}
             {data.runsNode && <option value="Node">This PC’s node page</option>}
           </select>
         </label>

@@ -72,6 +72,24 @@
         ".devdata-demo-node"
       ],
       "port": 5201
+    },
+    {
+      "name": "demo-monitor",
+      "runtimeExecutable": "C:/Program Files/dotnet/dotnet.exe",
+      "runtimeArgs": [
+        "run",
+        "--project",
+        "src/Rta.App",
+        "--no-launch-profile",
+        "--",
+        "--Mode",
+        "Monitor",
+        "--Urls",
+        "http://localhost:5202",
+        "--DataDir",
+        ".devdata-demo-monitor"
+      ],
+      "port": 5202
     }
   ]
 }
