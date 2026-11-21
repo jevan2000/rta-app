@@ -49,12 +49,12 @@ public static class IntegrationEndpoints
             await r.WriteCsvAsync(ctx.Response.Body, mics.Split(',', StringSplitOptions.RemoveEmptyEntries).Take(64).ToList(), from, to, minutes, ctx.RequestAborted);
         });
         // Opens in the browser by default; ?download=1 saves it as a file.
-        g.MapGet("/services/{id:long}/report.pdf", (long id, bool? download, HubStore store, ReportService r, HttpContext ctx) =>
+        g.MapGet("/services/{id:long}/report.pdf", (long id, string? download, HubStore store, ReportService r, HttpContext ctx) =>
         {
             var s = store.GetService(id);
             if (s is null) return Results.NotFound();
             var name = ReportService.FileName(s);
-            if (download == true) return Results.File(r.ServicePdf(id), "application/pdf", name);
+            if (IsDownload(download)) return Results.File(r.ServicePdf(id), "application/pdf", name);
             ctx.Response.Headers.ContentDisposition = $"inline; filename=\"{name}\"";
             return Results.File(r.ServicePdf(id), "application/pdf");
         });
@@ -67,10 +67,10 @@ public static class IntegrationEndpoints
             await r.WriteCsvAsync(ctx.Response.Body, store.ListMics().Select(m => m.Key).ToList(), s.StartTs, (s.EndTs ?? HubStore.Now()) + 1, false, ctx.RequestAborted);
         });
         g.MapGet("/reports", (ReportService r) => new { folder = r.Folder, files = r.ListReports().Select(f => new { name = f.Name, bytes = f.Bytes, modified = f.Modified }) });
-        g.MapGet("/reports/{name}", (string name, bool? download, ReportService r, HttpContext ctx) =>
+        g.MapGet("/reports/{name}", (string name, string? download, ReportService r, HttpContext ctx) =>
         {
             if (r.ReportPath(name) is not { } p) return Results.NotFound();
-            if (download == true) return Results.File(p, "application/pdf", name);
+            if (IsDownload(download)) return Results.File(p, "application/pdf", name);
             ctx.Response.Headers.ContentDisposition = $"inline; filename=\"{name}\"";
             return Results.File(p, "application/pdf");
         });
@@ -103,4 +103,7 @@ public static class IntegrationEndpoints
             catch (WebSocketException) { }
         });
     }
+
+    /// <summary>"?download=1" or "?download=true" saves the file instead of opening it.</summary>
+    private static bool IsDownload(string? v) => v is not null && (v == "1" || v.Equals("true", StringComparison.OrdinalIgnoreCase));
 }

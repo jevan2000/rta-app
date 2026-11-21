@@ -82,7 +82,7 @@ Download the latest **`RtaSetup-<version>.exe`** from the repo's [Releases page]
 | **Mics and the Hub on this PC** | A single-PC setup, or the main FOH PC. |
 | **Mics only** | A booth PC or laptop that sends readings to a Hub elsewhere. |
 | **Hub only** | An office or server PC with no mics that runs the dashboard and logging. |
-| **Monitor only** | A PC that just **watches**: the full dashboard and alarm pop-ups of the Hub, **view only**, with no mics. It finds the Hub on the network by itself and opens the dashboard at sign-in. Nothing can be changed from it, even with the admin password. |
+| **Monitor only** | A PC that just **watches**: the full dashboard and alarm pop-ups of the Hub, **view only**, with no mics. It finds the Hub on the network by itself and opens the dashboard at sign-in. It can still open and download everything there is to read: service PDF reports, CSV exports, saved reports and room exports. Nothing can be changed from it, even with the admin password. |
 
 **2. How should RTA start?**
 

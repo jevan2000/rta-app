@@ -28,7 +28,7 @@ public sealed class ReportService(HubStore store, HubSettingsStore settings, Nod
         get
         {
             var f = settings.Current.Integrations.Reports.Folder;
-            var dir = string.IsNullOrWhiteSpace(f) ? Path.Combine(paths.DataDir, "reports") : f;
+            var dir = Path.GetFullPath(string.IsNullOrWhiteSpace(f) ? Path.Combine(paths.DataDir, "reports") : f);
             Directory.CreateDirectory(dir);
             return dir;
         }
