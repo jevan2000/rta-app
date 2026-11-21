@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api } from '../api';
 import { useApp } from '../App';
 import { BackupPanel } from '../components/BackupPanel';
@@ -12,55 +12,118 @@ export function SettingsPage() {
   return <HubSettingsPage />;
 }
 
+interface ProbeResult { address: string; url: string; ok: boolean; hubName: string | null; hubId: string | null; appVersion: string | null; error: string | null }
 interface MonitorStatus {
   hubConnection: 'Auto' | 'Manual' | 'Off'; hubAddress: string | null; hubUrl: string | null; hubName: string | null;
   connected: boolean; message: string; discovered: { hubId: string; name: string; url: string }[];
+  discovery: { listening: boolean; listenError: string | null; announcementsLastMinute: number; lastAnnouncement: number | null; otherVersions: string[]; hint: string | null };
 }
 
-/** A monitor PC's own settings: which Hub to watch, and what opens at sign-in. */
+/** A monitor PC's own settings: which Hub to watch (found automatically, searched for, or at a fixed address). */
 function MonitorSettingsPage() {
-  const { data, reload } = useFetch<MonitorStatus>('/api/monitor', 5000);
+  const { data, reload } = useFetch<MonitorStatus>('/api/monitor', 4000);
+  const [mode, setMode] = useState<'Auto' | 'Manual' | null>(null);
   const [address, setAddress] = useState<string | null>(null);
+  const [test, setTest] = useState<ProbeResult | null>(null);
+  const [found, setFound] = useState<ProbeResult[] | null>(null);
+  const [busy, setBusy] = useState('');
   const [msg, setMsg] = useState('');
+  const latest = useRef(0);
   if (!data) return <Empty>Loading…</Empty>;
-  const put = async (body: object) => {
-    try { await api('/api/monitor', { method: 'PUT', json: body }); setMsg('Saved. The dashboard reconnects in a few seconds.'); reload(); }
+
+  const shown = mode ?? (data.hubConnection === 'Manual' ? 'Manual' : 'Auto');
+  const addr = address ?? data.hubAddress ?? '';
+  const save = async (body: object, done: string) => {
+    try { await api('/api/monitor', { method: 'PUT', json: body }); setMsg(done); setMode(null); reload(); }
     catch (e) { setMsg((e as Error).message); }
   };
+  const connect = async (a: string) => {
+    const run = ++latest.current; // only the latest test's answer counts
+    setBusy('test'); setTest(null); setMsg('');
+    try {
+      const r = await api<ProbeResult>(`/api/monitor/probe?address=${encodeURIComponent(a)}`);
+      if (run !== latest.current) return;
+      setTest(r);
+      if (r.ok) await save({ hubConnection: 'Manual', hubAddress: a }, `Connected to ${r.hubName}. The dashboard follows it from now on.`);
+    } catch (e) { if (run === latest.current) setMsg((e as Error).message); }
+    finally { if (run === latest.current) setBusy(''); }
+  };
+  const search = async () => {
+    setBusy('search'); setFound(null); setMsg('');
+    try { setFound(await api<ProbeResult[]>('/api/monitor/search', { method: 'POST' })); }
+    catch (e) { setMsg((e as Error).message); }
+    finally { setBusy(''); }
+  };
+  const d = data.discovery;
+
   return (
     <>
       <div className="page-head"><h2>Settings</h2></div>
       <section className="panel">
         <h3>Monitor PC</h3>
-        <p>This PC shows a Hub’s dashboard and alerts, <b>view only</b>: nothing can be changed from here, even with the admin password. Make changes on the Hub PC.</p>
-        <p className={data.connected ? 'ok-text' : 'warn'}>{data.message}</p>
-        <div className="form-grid">
-          <label>Hub to watch
-            <select value={data.hubConnection} onChange={(e) => put({ hubConnection: e.target.value, hubAddress: data.hubAddress })}>
-              <option value="Auto">Find it on the network</option>
-              <option value="Manual">At a fixed address</option>
-            </select>
-          </label>
-          {data.hubConnection === 'Manual' && (
-            <label>Hub address
-              <input value={address ?? data.hubAddress ?? ''} placeholder="e.g. 192.168.1.20:5180" onChange={(e) => setAddress(e.target.value)}
-                onBlur={() => address != null && put({ hubConnection: 'Manual', hubAddress: address })} />
-            </label>
-          )}
-        </div>
-        {data.hubConnection === 'Auto' && data.discovered.length > 1 && (
+        <p>This PC shows a Hub’s dashboard and alerts, <b>view only</b>: reports and exports can be downloaded, but nothing can be changed from here, even with the admin password.</p>
+        <p className={data.connected ? 'ok-text' : 'warn'}><b>{data.message}</b></p>
+
+        <h4>Hub to watch</h4>
+        <label className="check" style={{ display: 'block' }}>
+          <input type="radio" checked={shown === 'Auto'} onChange={() => { setMode('Auto'); save({ hubConnection: 'Auto' }, 'Looking for Hubs on the network.'); }} /> Find it on the network automatically
+        </label>
+        <label className="check" style={{ display: 'block' }}>
+          <input type="radio" checked={shown === 'Manual'} onChange={() => setMode('Manual')} /> At a fixed address
+        </label>
+
+        {shown === 'Manual' && (
+          <div className="actions" style={{ justifyContent: 'flex-start', marginTop: 8 }}>
+            <input value={addr} placeholder="Hub PC's IP, e.g. 192.168.1.20 (port 5180 unless changed)" style={{ minWidth: 320 }}
+              onChange={(e) => { setAddress(e.target.value); setTest(null); }} onKeyDown={(e) => { if (e.key === 'Enter' && addr.trim() && busy === '') connect(addr.trim()); }} />
+            <button className="primary" disabled={!addr.trim() || busy !== ''} onClick={() => connect(addr.trim())}>{busy === 'test' ? 'Testing…' : 'Test and connect'}</button>
+          </div>
+        )}
+        {test && !test.ok && <p className="warn">{test.error}</p>}
+
+        {shown === 'Auto' && data.discovered.length > 1 && (
           <>
-            <h4>Hubs on the network</h4>
+            <p className="muted small">More than one Hub is on the network. Watch:</p>
             {data.discovered.map((h) => (
               <label key={h.hubId} className="check" style={{ display: 'block' }}>
-                <input type="radio" checked={data.hubUrl === h.url} onChange={() => put({ hubConnection: 'Auto', preferredHubId: h.hubId })} /> {h.name} <span className="muted small">{h.url}</span>
+                <input type="radio" checked={data.hubUrl === h.url} onChange={() => save({ hubConnection: 'Auto', preferredHubId: h.hubId }, `Watching ${h.name}.`)} /> {h.name} <span className="muted small">{h.url}</span>
               </label>
             ))}
           </>
         )}
-        {data.hubConnection === 'Auto' && data.discovered.length === 0 && (
-          <p className="muted small">No Hub found yet. Hubs announce themselves on UDP port 5181; if the Hub is on another subnet or VLAN, use a fixed address.</p>
-        )}
+
+        <h4>Can’t find the Hub?</h4>
+        <p className="muted small">
+          {d.listening
+            ? `Hub announcements heard in the last minute: ${d.announcementsLastMinute}${d.lastAnnouncement ? ` (last at ${new Date(d.lastAnnouncement * 1000).toLocaleTimeString()})` : ''}.`
+            : 'Not listening for Hub announcements.'}
+          {d.otherVersions.length > 0 && <> Heard Hubs running another version: {d.otherVersions.join('; ')}.</>}
+        </p>
+        {d.hint && <p className="warn small">{d.hint}</p>}
+        <div className="actions" style={{ justifyContent: 'flex-start' }}>
+          <button disabled={busy !== ''} onClick={search}>{busy === 'search' ? 'Searching (up to ~20 s)…' : 'Search this network'}</button>
+          <span className="muted small">Tries port 5180 on every address of this PC’s network. It works even when the announcements are blocked.</span>
+        </div>
+        {found && (found.length === 0
+          ? <p className="warn small">No RTA Hub answered on port 5180 on this network. Check the Hub PC is on and its firewall allows RTA (re-run setup on it with “Allow RTA through Windows Firewall” ticked), or enter its address above if it uses another port or subnet.</p>
+          : (
+            <table className="grid">
+              <tbody>
+                {found.map((r) => (
+                  <tr key={r.url}>
+                    <td>{r.ok ? <b>{r.hubName}</b> : <span className="muted">RTA (not a Hub)</span>}</td>
+                    <td className="muted small">{r.url}{r.appVersion ? ` · version ${r.appVersion}` : ''}</td>
+                    <td style={{ textAlign: 'right' }}>{r.ok
+                      ? <button className="primary" onClick={() => { setMode('Manual'); setAddress(r.address); connect(r.address); }}>Watch this Hub</button>
+                      : <span className="muted small">{r.error}</span>}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ))}
+        <p className="muted small">
+          Other things to check: this PC and the Hub are on the same network; Windows on this PC calls the network <i>Private</i> (Settings → Network &amp; internet → your connection → Network profile type); and the Hub PC allows RTA through its firewall.
+        </p>
         {msg && <p className="muted small">{msg}</p>}
       </section>
       <ThisPcSection />

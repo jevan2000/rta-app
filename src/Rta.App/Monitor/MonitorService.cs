@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Net;
+using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using System.Net.WebSockets;
 using System.Text.Json;
@@ -24,7 +25,14 @@ public sealed record DiscoveredHubView(string HubId, string Name, string Url);
 
 public sealed record MonitorStatus(
     HubConnectionMode HubConnection, string? HubAddress, string? HubUrl, string? HubName, bool Connected,
-    string Message, IReadOnlyList<DiscoveredHubView> Discovered);
+    string Message, IReadOnlyList<DiscoveredHubView> Discovered, DiscoveryHealth Discovery);
+
+/// <summary>How automatic discovery is going, for troubleshooting on the monitor's Settings page.</summary>
+public sealed record DiscoveryHealth(bool Listening, string? ListenError, int AnnouncementsLastMinute, long? LastAnnouncement,
+    IReadOnlyList<string> OtherVersions, string? Hint);
+
+/// <summary>The result of trying a Hub address (or one found by searching the network).</summary>
+public sealed record ProbeResult(string Address, string Url, bool Ok, string? HubName, string? HubId, string? AppVersion, string? Error);
 
 /// <summary>
 /// A monitor PC: no mics and no Hub of its own. It finds a Hub (UDP beacon, or a fixed address) and
@@ -41,6 +49,10 @@ public sealed class MonitorService(NodePaths paths, IHttpClientFactory http, ILo
     private DateTimeOffset _lastOk = DateTimeOffset.MinValue;
     private string? _hubName;
     private string? _lastError;
+    private volatile bool _listening;
+    private volatile string? _listenError;
+    private readonly ConcurrentQueue<DateTimeOffset> _heard = new();
+    private readonly ConcurrentDictionary<string, string> _otherVersions = new();
 
     public MonitorSettings Settings
     {
@@ -89,7 +101,110 @@ public sealed class MonitorService(NodePaths paths, IHttpClientFactory http, ILo
             : connected ? $"Watching {_hubName ?? hub}." : $"Can't reach the Hub at {hub}{(_lastError is null ? "" : ": " + _lastError)}.";
         var found = _found.Values.Where(f => DateTimeOffset.UtcNow - f.LastSeen < TimeSpan.FromSeconds(15))
             .Select(f => new DiscoveredHubView(f.HubId, f.Name, f.Url)).OrderBy(f => f.Name).ToList();
-        return new MonitorStatus(s.HubConnection, s.HubAddress, hub, _hubName, connected, message, found);
+        return new MonitorStatus(s.HubConnection, s.HubAddress, hub, _hubName, connected, message, found, Health());
+    }
+
+    private DiscoveryHealth Health()
+    {
+        while (_heard.TryPeek(out var t) && DateTimeOffset.UtcNow - t > TimeSpan.FromMinutes(1)) _heard.TryDequeue(out _);
+        var count = _heard.Count;
+        var last = _heard.LastOrDefault();
+        var others = _otherVersions.Select(kv => $"{kv.Key} ({kv.Value})").ToList();
+        string? hint = null;
+        if (!_listening)
+            hint = $"This PC can't listen for Hub announcements (UDP port {Proto.BeaconPort}){(_listenError is null ? "" : ": " + _listenError)}. Use a fixed address or Search this network.";
+        else if (others.Count > 0 && _found.IsEmpty)
+            hint = "A Hub was heard, but it runs a different version of RTA. Install the same version on this PC and the Hub.";
+        else if (count == 0)
+            hint = $"No Hub announcements reach this PC. Usually that's Windows Firewall here (the network is set to Public, or RTA wasn't allowed through during setup), "
+                 + "or the Hub is on another subnet/VLAN. Search this network, or enter the Hub's IP address.";
+        return new DiscoveryHealth(_listening, _listenError, count, count > 0 ? last.ToUnixTimeSeconds() : null, others, hint);
+    }
+
+    // ---------- trying an address, searching the network ----------
+
+    /// <summary>Checks that a Hub answers at this address (and that it is a Hub, not a node-only PC).</summary>
+    public async Task<ProbeResult> Probe(string address, CancellationToken ct, TimeSpan? timeout = null)
+    {
+        var url = HubBase(address);
+        if (url is null) return new ProbeResult(address, "", false, null, null, null, "That isn't an address. Use the Hub PC's IP, e.g. 192.168.1.20 or 192.168.1.20:5180.");
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        cts.CancelAfter(timeout ?? TimeSpan.FromSeconds(5));
+        var client = http.CreateClient("monitor");
+        try
+        {
+            var app = await client.GetFromJsonAsync<JsonElement>($"{url}/api/app", cts.Token);
+            var version = app.TryGetProperty("version", out var v) ? v.GetString() : null;
+            var runsHub = app.TryGetProperty("runsHub", out var rh) && rh.GetBoolean();
+            if (!runsHub)
+                return new ProbeResult(address, url, false, null, null, version, "RTA answers there, but that PC doesn't run the Hub (it's a node or a monitor). Use the Hub PC's address.");
+            var live = await client.GetFromJsonAsync<JsonElement>($"{url}/api/hub/live", cts.Token);
+            return new ProbeResult(address, url, true, live.GetProperty("hubName").GetString(), live.GetProperty("hubId").GetString(), version, null);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or OperationCanceledException or JsonException or KeyNotFoundException or InvalidOperationException)
+        {
+            var why = ex is TaskCanceledException or OperationCanceledException
+                ? "no answer (is the Hub PC on, and does its firewall allow RTA on port " + new Uri(url).Port + "?)"
+                : ex is HttpRequestException h && h.InnerException is SocketException se && se.SocketErrorCode == SocketError.ConnectionRefused
+                    ? "nothing is listening on that port (check the port; the default is 5180)"
+                    : ex.Message;
+            return new ProbeResult(address, url, false, null, null, null, $"Can't reach a Hub at {url}: {why}.");
+        }
+    }
+
+    /// <summary>
+    /// The addresses to try on one network: the whole subnet when it has up to 1,024 addresses (a /22),
+    /// otherwise the 1,024 around this PC (larger networks would take too long to sweep).
+    /// </summary>
+    public static IEnumerable<IPAddress> SearchRange(IPAddress self, int prefixLength)
+    {
+        var me = BitConverter.ToUInt32(self.GetAddressBytes().Reverse().ToArray());
+        var prefix = Math.Clamp(prefixLength, 22, 30);
+        var mask = prefix == 0 ? 0u : uint.MaxValue << (32 - prefix);
+        var network = me & mask;
+        var broadcast = network | ~mask;
+        for (var a = network + 1; a < broadcast; a++)
+            if (a != me) yield return new IPAddress(BitConverter.GetBytes(a).Reverse().ToArray());
+    }
+
+    /// <summary>
+    /// Looks for Hubs on this PC's own subnets by trying port 5180 on every address (see <see cref="SearchRange"/>). Works where the UDP announcements are blocked, since it only needs an outgoing connection.
+    /// </summary>
+    public async Task<IReadOnlyList<ProbeResult>> Search(CancellationToken ct)
+    {
+        var targets = new HashSet<string>();
+        foreach (var ni in NetworkInterface.GetAllNetworkInterfaces())
+        {
+            if (ni.OperationalStatus != OperationalStatus.Up || ni.NetworkInterfaceType is NetworkInterfaceType.Loopback or NetworkInterfaceType.Tunnel) continue;
+            foreach (var ua in ni.GetIPProperties().UnicastAddresses)
+            {
+                if (ua.Address.AddressFamily != AddressFamily.InterNetwork || IPAddress.IsLoopback(ua.Address)) continue;
+                var b = ua.Address.GetAddressBytes();
+                if (b[0] == 169 && b[1] == 254) continue;   // no DHCP address: nothing to search
+                foreach (var t in SearchRange(ua.Address, ua.PrefixLength)) targets.Add(t.ToString());
+            }
+        }
+        var open = new ConcurrentBag<string>();
+        using var gate = new SemaphoreSlim(64);
+        await Task.WhenAll(targets.Select(async ip =>
+        {
+            await gate.WaitAsync(ct);
+            try
+            {
+                using var tcp = new TcpClient();
+                using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                cts.CancelAfter(TimeSpan.FromMilliseconds(600));
+                await tcp.ConnectAsync(ip, 5180, cts.Token);
+                open.Add(ip);
+            }
+            catch (Exception) { /* nothing there */ }
+            finally { gate.Release(); }
+        }));
+        var results = await Task.WhenAll(open.Select(ip => Probe(ip, ct, TimeSpan.FromSeconds(4))));
+        // Only PCs running RTA: a Hub, or RTA that isn't one (worth telling apart); other web servers on 5180 are dropped.
+        // A Hub with two network connections answers on both: list it once.
+        return results.Where(r => r.Ok || r.AppVersion is not null).OrderByDescending(r => r.Ok).ThenBy(r => r.Address)
+            .DistinctBy(r => r.Ok ? r.HubId : r.Url).ToList();
     }
 
     public void MarkOk(string? hubName = null) { _lastOk = DateTimeOffset.UtcNow; _lastError = null; if (hubName is not null) _hubName = hubName; }
@@ -130,16 +245,26 @@ public sealed class MonitorService(NodePaths paths, IHttpClientFactory http, ILo
                     udp = new UdpClient { ExclusiveAddressUse = false };
                     udp.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
                     udp.Client.Bind(new IPEndPoint(IPAddress.Any, Proto.BeaconPort));
+                    _listening = true;
+                    _listenError = null;
                 }
                 var res = await udp.ReceiveAsync(ct);
                 var b = JsonSerializer.Deserialize<HubBeacon>(res.Buffer, Proto.Json);
-                if (b is null || b.App != Proto.BeaconApp || b.V != Proto.Version) continue;
+                if (b is null || b.App != Proto.BeaconApp) continue;
+                if (b.V != Proto.Version)
+                {
+                    _otherVersions[$"{b.Name} at {res.RemoteEndPoint.Address}"] = $"protocol {b.V}, this PC {Proto.Version}";
+                    continue;
+                }
+                _heard.Enqueue(DateTimeOffset.UtcNow);
                 _found[b.HubId] = new Found(b.HubId, b.Name, $"http://{res.RemoteEndPoint.Address}:{b.Port}", DateTimeOffset.UtcNow);
             }
             catch (OperationCanceledException) { break; }
             catch (Exception ex)
             {
                 log.LogDebug(ex, "Beacon listener error");
+                _listening = false;
+                _listenError = ex.Message;
                 udp?.Dispose();
                 udp = null;
                 try { await Task.Delay(5000, ct); } catch (OperationCanceledException) { break; }
@@ -156,6 +281,8 @@ public static class MonitorEndpoints
     public static void MapMonitorEndpoints(this IEndpointRouteBuilder app)
     {
         app.MapGet("/api/monitor", (MonitorService m) => m.Status());
+        app.MapGet("/api/monitor/probe", (string address, MonitorService m, CancellationToken ct) => m.Probe(address, ct));
+        app.MapPost("/api/monitor/search", (MonitorService m, CancellationToken ct) => m.Search(ct));
         app.MapPut("/api/monitor", (MonitorSettings s, MonitorService m) =>
         {
             try { return Results.Ok(m.Save(s with { PreferredHubId = s.PreferredHubId ?? m.Settings.PreferredHubId })); }
