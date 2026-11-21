@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
-import { api, getAuth, onSignInRequired, useHubLive, useLiveHistory, fmtTime } from './api';
+import { api, getAuth, onSignInRequired, useHubLive, useLiveHistory, fmtTime, canLeave } from './api';
 import type { AuthStatus, HubLive, LivePointMap } from './appTypes';
 import { LivePage } from './pages/LivePage';
 import { MicPage } from './pages/MicPage';
@@ -32,7 +32,13 @@ function useHashRoute() {
   const read = () => location.hash.replace(/^#\/?/, '') || 'live';
   const [route, setRoute] = useState(read);
   useEffect(() => {
-    const on = () => setRoute(read());
+    let current = read();
+    const on = () => {
+      // Unsaved changes on this page: stay unless the user agrees to leave.
+      if (read() !== current && !canLeave()) { history.replaceState(null, '', '#/' + current); return; }
+      current = read();
+      setRoute(current);
+    };
     window.addEventListener('hashchange', on);
     return () => window.removeEventListener('hashchange', on);
   }, []);

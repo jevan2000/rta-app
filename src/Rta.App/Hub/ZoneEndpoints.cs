@@ -1,3 +1,5 @@
+using System.Text.Json;
+using Rta.App.Node;
 using Rta.Core.Zones;
 
 namespace Rta.App.Hub;
@@ -29,6 +31,36 @@ public static class ZoneEndpoints
             try { return Results.Ok(p.Save(plan)); }
             catch (ArgumentException ex) { return Results.Problem(ex.Message, statusCode: 400); }
         });
+        // Earlier saved versions of the plan, and putting one back.
+        g.MapGet("/plan/versions", (PlanStore p) => p.Versions());
+        g.MapPost("/plan/versions/{name}/restore", (string name, PlanStore p) =>
+        {
+            if (p.ReadVersion(name) is not { } old) return Results.NotFound();
+            try { return Results.Ok(p.Save(old)); }
+            catch (ArgumentException ex) { return Results.Problem(ex.Message, statusCode: 400); }
+        });
+
+        // Room files: export the plan with its images and surveys; import one to replace the plan.
+        g.MapGet("/plan/export", (PlanStore p, HubStore store, HubSettingsStore settings) =>
+        {
+            var room = Rooms.Export(p, store, settings);
+            var bytes = JsonSerializer.SerializeToUtf8Bytes(room, HubStore.SurveyJson);
+            var safe = new string(settings.Current.Name.Where(c => !Path.GetInvalidFileNameChars().Contains(c)).ToArray()).Trim();
+            return Results.File(bytes, "application/json", $"Room - {(safe.Length > 0 ? safe : "RTA")} - {DateTime.Now:yyyy-MM-dd HHmm}{Rooms.Extension}");
+        });
+        g.MapPost("/plan/import", async (HttpRequest req, PlanStore p, HubStore store, NodePaths paths, HubState state) =>
+        {
+            if (req.ContentLength > 200L * 1024 * 1024) return Results.Problem("Room file is too large.", statusCode: 413);
+            try
+            {
+                using var ms = new MemoryStream();
+                await req.Body.CopyToAsync(ms);
+                ms.Position = 0;
+                return Results.Ok(Rooms.Import(Rooms.Read(ms), p, store, paths, state));
+            }
+            catch (ArgumentException ex) { return Results.Problem(ex.Message, statusCode: 400); }
+        });
+
         g.MapPost("/plan/images", async (HttpRequest req, PlanStore p) =>
         {
             if (req.ContentLength > PlanStore.MaxImageBytes) return Results.Problem("Image must be under 15 MB.", statusCode: 413);

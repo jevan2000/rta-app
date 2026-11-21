@@ -20,7 +20,7 @@ interface Preview {
   suggestTakeOver: boolean;
 }
 
-const KIND: [string, string][] = [['daily-', 'Daily'], ['before-update-', 'Before update'], ['before-restore-', 'Before restore']];
+const KIND: [string, string][] = [['daily-', 'Daily'], ['before-update-', 'Before update'], ['before-restore-', 'Before restore'], ['before-room-import-', 'Before room import']];
 const kindOf = (name: string) => KIND.find(([p]) => name.startsWith(p))?.[1] ?? 'Backup';
 const mb = (b: number) => (b < 1024 * 1024 ? `${Math.max(1, Math.round(b / 1024))} KB` : `${(b / 1024 / 1024).toFixed(1)} MB`);
 

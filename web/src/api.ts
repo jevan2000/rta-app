@@ -32,6 +32,15 @@ export async function api<T = unknown>(path: string, init: RequestInit & { json?
 
 export const getAuth = () => api<AuthStatus>('/api/auth/status');
 
+/** A page with unsaved work sets this; leaving it (to another dashboard page) asks first. */
+let leaveGuard: (() => string | null) | null = null;
+export function setLeaveGuard(g: (() => string | null) | null) { leaveGuard = g; }
+/** True if it's fine to leave the current page. */
+export function canLeave() {
+  const why = leaveGuard?.();
+  return !why || confirm(why);
+}
+
 /** Live Hub snapshot over WebSocket, pushed as readings arrive (up to 10×/s); reconnects automatically. */
 export function useHubLive(): { live: HubLive | null; connected: boolean } {
   const [live, setLive] = useState<HubLive | null>(null);

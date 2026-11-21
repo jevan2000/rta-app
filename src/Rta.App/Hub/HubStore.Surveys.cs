@@ -16,7 +16,7 @@ public sealed record SurveyRow(
 public sealed partial class HubStore
 {
     /// <summary>Survey data may contain NaN (e.g. a manual entry with only dBC), so it uses its own options.</summary>
-    private static readonly JsonSerializerOptions SurveyJson = new(CalibrationStore.Json)
+    public static readonly JsonSerializerOptions SurveyJson = new(CalibrationStore.Json)
     {
         NumberHandling = JsonNumberHandling.AllowNamedFloatingPointLiterals,
         WriteIndented = false,
@@ -73,6 +73,34 @@ public sealed partial class HubStore
                     JsonSerializer.Deserialize<Dictionary<string, Pt>>(r.GetString(11), SurveyJson) ?? []));
             }
             return list;
+        }
+    }
+
+    /// <summary>Replaces every survey of the given zones with <paramref name="rows"/> (ids are reassigned). Used when importing a room.</summary>
+    public void ReplaceSurveys(IReadOnlyCollection<int> zoneIds, IEnumerable<SurveyRow> rows)
+    {
+        lock (_lock)
+        {
+            EnsureSurveyTables();
+            using var tx = _db.BeginTransaction();
+            foreach (var z in zoneIds)
+            {
+                using var del = Cmd("DELETE FROM surveys WHERE zone_id=$z", ("$z", z));
+                del.Transaction = tx;
+                del.ExecuteNonQuery();
+            }
+            foreach (var s in rows.Where(r => zoneIds.Contains(r.ZoneId)))
+            {
+                using var cmd = Cmd("""
+                    INSERT INTO surveys (zone_id,kind,start_ts,end_ts,seconds,confidence,rover_key,excluded,note,data,ref_positions)
+                    VALUES ($z,$k,$s,$e,$sec,$c,$r,$x,$n,$d,$p)
+                    """, ("$z", s.ZoneId), ("$k", s.Kind), ("$s", s.StartTs), ("$e", s.EndTs), ("$sec", s.Seconds), ("$c", s.Confidence),
+                    ("$r", (object?)s.RoverKey ?? DBNull.Value), ("$x", s.Excluded ? 1 : 0), ("$n", (object?)s.Note ?? DBNull.Value),
+                    ("$d", JsonSerializer.Serialize(s.Measurement, SurveyJson)), ("$p", JsonSerializer.Serialize(s.RefPositions, SurveyJson)));
+                cmd.Transaction = tx;
+                cmd.ExecuteNonQuery();
+            }
+            tx.Commit();
         }
     }
 

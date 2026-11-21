@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { api } from '../api';
+import { api, setLeaveGuard } from '../api';
 import { useApp } from '../App';
 import { Blueprint, SHAPE_STYLE, type Hit } from '../components/Blueprint';
 import { Empty } from '../components/common';
@@ -19,11 +19,21 @@ const TOOLS: [Tool, string, string][] = [
 ];
 
 const uid = () => Math.random().toString(36).slice(2, 10);
+
+// Unsaved edits are also kept in this browser, so a closed tab or a failed save doesn't lose them.
+const DRAFT_KEY = 'rta.planDraft';
+interface Draft { at: number; plan: Plan }
+const readDraft = (): Draft | null => { try { const t = localStorage.getItem(DRAFT_KEY); return t ? JSON.parse(t) : null; } catch { return null; } };
+const writeDraft = (d: Draft | null) => { try { if (d) localStorage.setItem(DRAFT_KEY, JSON.stringify(d)); else localStorage.removeItem(DRAFT_KEY); } catch { /* storage full or blocked */ } };
+const samePlan = (a: Plan, b: Plan) => JSON.stringify(a.floors) === JSON.stringify(b.floors);
+
+interface PlanVersion { name: string; saved: number; floors: number; zones: number; mics: number; summary: string }
+interface ImportResult { plan: Plan; surveys: number; missingMics: number; safetyBackup: string | null }
 const rectPts = (a: Pt, b: Pt): Pt[] => [{ x: a.x, y: a.y }, { x: b.x, y: a.y }, { x: b.x, y: b.y }, { x: a.x, y: b.y }];
 
 export function PlanPage() {
   const { live } = useApp();
-  const { data, reload } = useFetch<Plan>('/api/hub/plan');
+  const { data, setData } = useFetch<Plan>('/api/hub/plan');
   const [plan, setPlan] = useState<Plan | null>(null);
   const [floorIdx, setFloorIdx] = useState(0);
   const [tool, setTool] = useState<Tool>('select');
@@ -35,9 +45,25 @@ export function PlanPage() {
   const [micToPlace, setMicToPlace] = useState('');
   const [dirty, setDirty] = useState(false);
   const [msg, setMsg] = useState('');
+  const [error, setError] = useState('');
+  const [draftOffer, setDraftOffer] = useState<Draft | null>(null);
+  const [versions, setVersions] = useState<PlanVersion[] | null>(null);
+  const [busy, setBusy] = useState(false);
   const drag = useRef<{ start: Pt; hit: Hit; orig: Floor } | null>(null);
 
   useEffect(() => { if (data && !dirty) setPlan(data); }, [data, dirty]);
+  // Offer unsaved edits left in this browser (closed tab, failed save) if they differ from the Hub's plan.
+  useEffect(() => {
+    if (!data) return;
+    const d = readDraft();
+    if (d && !samePlan(d.plan, data)) setDraftOffer(d); else writeDraft(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data === null]);
+  useEffect(() => { if (dirty && plan) writeDraft({ at: Date.now(), plan }); }, [plan, dirty]);
+  useEffect(() => {
+    setLeaveGuard(() => (dirty ? 'The plan has unsaved changes. Leave without saving? (They stay in this browser and are offered next time.)' : null));
+    return () => setLeaveGuard(null);
+  }, [dirty]);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.target as HTMLElement).closest('input,select,textarea')) return;
@@ -173,13 +199,59 @@ export function PlanPage() {
   };
 
   const save = async () => {
+    setBusy(true);
     try {
       const saved = await api<Plan>('/api/hub/plan', { method: 'PUT', json: plan });
+      // Use the Hub's answer directly (it has the real zone ids), so the editor never shows the old plan.
+      setData(saved);
       setPlan(saved);
       setDirty(false);
-      setMsg('Saved.');
-      reload();
-    } catch (e) { setMsg((e as Error).message); }
+      writeDraft(null);
+      setError('');
+      setMsg(`Saved ${new Date().toLocaleTimeString()}.`);
+      if (versions) loadVersions();
+    } catch (e) {
+      setError(`Not saved: ${(e as Error).message} Your changes are still here (and kept in this browser); try Save again.`);
+    } finally { setBusy(false); }
+  };
+
+  const loadVersions = async () => {
+    try { setVersions(await api<PlanVersion[]>('/api/hub/plan/versions')); } catch (e) { setError((e as Error).message); }
+  };
+
+  const restoreVersion = async (v: PlanVersion) => {
+    if (dirty && !confirm('Discard your unsaved changes?')) return;
+    if (!confirm(`Put back the plan saved ${new Date(v.saved * 1000).toLocaleString()}? The current plan is kept as a version too.`)) return;
+    try {
+      const saved = await api<Plan>(`/api/hub/plan/versions/${encodeURIComponent(v.name)}/restore`, { method: 'POST' });
+      setData(saved); setPlan(saved); setDirty(false); writeDraft(null); setSel(null); setFloorIdx(0);
+      setMsg('Earlier version restored.');
+      loadVersions();
+    } catch (e) { setError((e as Error).message); }
+  };
+
+  const exportRoom = () => {
+    if (dirty && !confirm('The export is the last saved plan; your unsaved changes aren\'t in it. Export anyway?')) return;
+    window.location.href = '/api/hub/plan/export';
+  };
+
+  const importRoom = async (file: File | undefined) => {
+    if (!file) return;
+    let room: { plan?: Plan; surveys?: unknown[]; hubName?: string; exported?: string; format?: string };
+    try { room = JSON.parse(await file.text()); } catch { setError('That file isn\'t a room file.'); return; }
+    if (room.format !== 'rta-room' || !room.plan) { setError('That file isn\'t an RTA room file.'); return; }
+    const zones = room.plan.floors.reduce((n, f) => n + f.zones.length, 0);
+    if (!confirm(`Replace the current plan with "${file.name}"?\n\n${room.plan.floors.length} floor(s), ${zones} zone(s), ${room.surveys?.length ?? 0} survey(s)` +
+      `${room.hubName ? `, from ${room.hubName}` : ''}${room.exported ? ` (${new Date(room.exported).toLocaleString()})` : ''}.\n\n` +
+      'The current plan is kept as an earlier version, and a settings backup is saved first.' + (dirty ? '\nYour unsaved changes will be discarded.' : ''))) return;
+    setBusy(true);
+    try {
+      const r = await api<ImportResult>('/api/hub/plan/import', { method: 'POST', body: file, headers: { 'Content-Type': 'application/json' } });
+      setData(r.plan); setPlan(r.plan); setDirty(false); writeDraft(null); setSel(null); setFloorIdx(0); setError('');
+      setMsg(`Room imported with ${r.surveys} survey(s).` + (r.missingMics ? ` ${r.missingMics} placed mic(s) aren't on this Hub; place yours instead.` : ''));
+      if (versions) loadVersions();
+    } catch (e) { setError((e as Error).message); }
+    finally { setBusy(false); }
   };
 
   const uploadUnderlay = async (file: File) => {
@@ -222,8 +294,39 @@ export function PlanPage() {
         <span className="spacer" />
         {dirty && <span className="warn small">Unsaved changes</span>}
         <span className="muted small">{msg}</span>
-        <button className="primary" disabled={!dirty} onClick={save}>Save plan</button>
+        <button onClick={() => (versions ? setVersions(null) : loadVersions())}>Versions…</button>
+        <button onClick={exportRoom}>Export room</button>
+        <label className="filebtn">Import room…<input type="file" accept=".rtaroom,.json" hidden onChange={(e) => { importRoom(e.target.files?.[0]); e.target.value = ''; }} /></label>
+        <button className="primary" disabled={!dirty || busy} onClick={save}>{busy ? 'Saving…' : 'Save plan'}</button>
       </div>
+      {error && <div className="notice">{error}</div>}
+      {draftOffer && (
+        <div className="notice">
+          This browser has unsaved plan changes from {new Date(draftOffer.at).toLocaleString()}.{' '}
+          <button onClick={() => { setPlan(draftOffer.plan); setDirty(true); setDraftOffer(null); setFloorIdx(0); setMsg('Unsaved changes restored. Save to keep them.'); }}>Restore them</button>{' '}
+          <button className="ghost" onClick={() => { writeDraft(null); setDraftOffer(null); }}>Discard</button>
+        </div>
+      )}
+      {versions && (
+        <section className="panel">
+          <h3>Saved versions</h3>
+          <p className="muted small">Every save keeps the previous plan (the last 30). Restoring one keeps the current plan as a version too.</p>
+          {versions.length === 0 ? <p className="muted small">No earlier versions yet.</p> : (
+            <table className="grid">
+              <thead><tr><th>Replaced at</th><th>Contents</th><th /></tr></thead>
+              <tbody>
+                {versions.map((v) => (
+                  <tr key={v.name}>
+                    <td>{new Date(v.saved * 1000).toLocaleString()}</td>
+                    <td className="small">{v.summary}{v.mics ? `, ${v.mics} mics placed` : ''}</td>
+                    <td style={{ textAlign: 'right' }}><button onClick={() => restoreVersion(v)}>Restore</button></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </section>
+      )}
 
       <div className="toolbar wrap">
         {TOOLS.map(([t, label]) => (
