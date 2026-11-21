@@ -93,7 +93,10 @@ Download the latest **`RtaSetup-<version>.exe`** from the repo's [Releases page]
 
 Leave **"Allow RTA through Windows Firewall"** ticked. The Hub, the other nodes and NDI need it, and the rule only applies on private and domain networks.
 
-On a **monitor** PC, install with **when someone signs in**. Its dashboard is at **http://localhost:5180** and shows **View only** at the top right. If there's more than one Hub on the network, or the Hub is on another subnet, choose it under **Settings → Monitor PC**.
+On a **monitor** PC, install with **when someone signs in**. Its dashboard is at **http://localhost:5180** and shows **View only** at the top right. If it doesn't find the Hub by itself, open **Settings → Monitor PC**:
+- **Search this network** tries every address on the monitor's network (port 5180) and lists the Hubs that answer; click **Watch this Hub**. This works even where the Hub's announcements are blocked.
+- **At a fixed address**: type the Hub PC's IP (add `:port` if it isn't 5180) and click **Test and connect**. It says what's wrong if the Hub can't be reached.
+- The page also shows whether Hub announcements are reaching the PC. If none are, it's usually Windows Firewall on the monitor (the network is set to *Public*, or RTA wasn't allowed through in setup) or the Hub being on another subnet/VLAN.
 
 When setup finishes:
 
