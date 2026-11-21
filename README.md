@@ -108,9 +108,9 @@ When setup finishes:
 <summary>Scripted / silent install</summary>
 
 ```bat
-RtaSetup-1.0.4.exe /VERYSILENT /ROLE=Both /RUNAS=signin /TASKS="firewall,startup"
-RtaSetup-1.0.4.exe /VERYSILENT /ROLE=Hub  /RUNAS=service /TASKS="firewall"
-RtaSetup-1.0.4.exe /VERYSILENT /ROLE=Monitor /RUNAS=signin /TASKS="firewall,startup"
+RtaSetup-1.0.5.exe /VERYSILENT /ROLE=Both /RUNAS=signin /TASKS="firewall,startup"
+RtaSetup-1.0.5.exe /VERYSILENT /ROLE=Hub  /RUNAS=service /TASKS="firewall"
+RtaSetup-1.0.5.exe /VERYSILENT /ROLE=Monitor /RUNAS=signin /TASKS="firewall,startup"
 ```
 `/ROLE` is `Both`, `Node`, `Hub` or `Monitor`; `/RUNAS` is `signin` or `service`. The choices are saved in `C:\ProgramData\RtaApp\app.json`.
 </details>
@@ -376,7 +376,7 @@ Keep a recent backup somewhere off the PC (a USB stick or a shared drive), espec
 
 ## Known limitations
 
-- **Field testing:** v1.0.4 has been tested with built-in test signals, WASAPI capture and the NDI 6 runtime on one PC. The following haven't been tried on real hardware yet:
+- **Field testing:** v1.0.5 has been tested with built-in test signals, WASAPI capture and the NDI 6 runtime on one PC. The following haven't been tried on real hardware yet:
   - ASIO interfaces, especially under automatic sign-in
   - multi-PC discovery across a real network
   - a real ProPresenter 21/22, including whether its API wants a password and its exact Message token format
